@@ -7,7 +7,7 @@ Current draw support:
 - Random draw
 - Round robin
 - Seeded draw option (currently behaves as an ordered draw until seeding controls are added)
-- Race to 3, 5, 7 or 9
+- Race to 1, 2, 3, 5, 7 or 9
 - Draws are saved in Supabase
 
 Before deploying V4:
