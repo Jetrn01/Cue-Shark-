@@ -1,0 +1,3 @@
+-- PottersMate V5 uses the existing competition_matches table from V4.
+-- No new SQL is required for the V5 UI.
+-- Keep the V4 draw SQL in place.

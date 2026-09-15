@@ -1,18 +1,12 @@
-# PottersMate V4
+# PottersMate V5
 
-V4 adds the first persistent Draw Builder.
+V5 expands the draw builder with:
+- Knockout, Random Draw, Seeded Draw and Round Robin choices
+- Race to 1, 2, 3, 5, 7 and 9
+- Persistent match records
+- Byes represented in knockout draws
+- Existing player/check-in and competition management
 
-Current draw support:
-- Singles
-- Random draw
-- Round robin
-- Seeded draw option (currently behaves as an ordered draw until seeding controls are added)
-- Race to 1, 2, 3, 5, 7 or 9
-- Draws are saved in Supabase
+No additional SQL is required if V4 `competition_matches` SQL has already been run.
 
-Before deploying V4:
-1. Run `v4-draw.sql` in the Supabase SQL Editor.
-2. Replace `app/page.js`, `app/layout.js`, `package.json` and `README.md` in the existing GitHub repository.
-3. Keep the existing Vercel environment variables unchanged.
-
-V4 intentionally keeps doubles/teams/scotch out of the first draw implementation so the data model can be tested safely before expanding the draw engine.
+Important: this is the first tournament-engine iteration. Automatic winner progression is intentionally reserved for the live scoring/match-results layer so results are not guessed before scoring exists.
