@@ -1,13 +1,7 @@
-# PottersMate V6
+# PottersMate V6 — corrected
 
-V6 adds organiser player editing/removal, table management, accessibility fields, and match-to-table assignment.
+This build preserves the existing V5 database field names (`start_date`, `first_name`, `last_name`, `email`, `club_name`) and adds V6 organiser player editing/removal, table management, accessibility fields, and match-to-table assignment.
 
-## Before deploying
+Run `v6.sql` once in Supabase, then replace the GitHub repository contents and let Vercel deploy.
 
-1. Run `v6.sql` in the Supabase SQL Editor.
-2. Commit/upload the contents of this ZIP to the existing GitHub repository.
-3. Let Vercel redeploy from `main`.
-
-The package uses Next.js 15.5.24, the current maintained 15.x LTS security release as of August 2026.
-
-The permanent table QR/live-scoring mobile route is the next scoring step of V6.
+Next.js is pinned to 15.5.24 to avoid the vulnerable 15.3.3 release.
