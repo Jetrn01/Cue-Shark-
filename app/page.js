@@ -21,11 +21,16 @@ export default function Home() {
   const [competitions,setCompetitions]=useState([]),[selected,setSelected]=useState(null);
   const [players,setPlayers]=useState([]),[tables,setTables]=useState([]),[matches,setMatches]=useState([]);
   const [modal,setModal]=useState(null),[msg,setMsg]=useState('');
+  const [drawSettings,setDrawSettings]=useState({type:'Knockout',race_to:3});
   const [qrData,setQrData]=useState(null);
+  const [playerDB,setPlayerDB]=useState([]);
 
   useEffect(()=>{supabase.auth.getSession().then(({data})=>setSession(data.session));
     const {data:s}=supabase.auth.onAuthStateChange((_e,x)=>setSession(x)); return()=>s.subscription.unsubscribe()},[]);
   useEffect(()=>{if(session) loadCompetitions()},[session]);
+  useEffect(()=>{if(session) loadPlayerDB()},[session]);
+
+  async function loadPlayerDB(){const {data,error}=await supabase.from('players').select('id,first_name,last_name,display_name,phone,email,club_name').order('display_name',{ascending:true});if(error)setMsg(error.message);else setPlayerDB(data||[])}
 
   async function loadCompetitions(){const {data,error}=await supabase.from('competitions').select('*').order('start_date',{ascending:true}); if(error)setMsg(error.message);else setCompetitions(data||[])}
   async function load(c){setSelected(c);
@@ -89,6 +94,29 @@ export default function Home() {
     else {const r=await supabase.from('players').insert(data).select().single();error=r.error;if(!error)({error}=await supabase.from('competition_players').insert({competition_id:selected.id,player_id:r.data.id,checked_in:false}))}
     if(error)setMsg(error.message);else{setModal(null);load(selected)}
   }
+  async function addExistingPlayerToCompetition(p){
+    if(!selected)return;
+    const already=players.some(x=>x.player_id===p.id);
+    if(already){setMsg(`${p.display_name||`${p.first_name||''} ${p.last_name||''}`.trim()} is already in this competition.`);return;}
+    const {error}=await supabase.from('competition_players').insert({competition_id:selected.id,player_id:p.id,checked_in:false});
+    if(error){setMsg(error.message);return;}
+    await load(selected);
+    setMsg(`${p.display_name||`${p.first_name||''} ${p.last_name||''}`.trim()} added to ${selected.name}.`);
+  }
+
+  async function saveMasterPlayer(f){
+    const data={first_name:f.first_name.trim(),last_name:f.last_name.trim(),display_name:`${f.first_name.trim()} ${f.last_name.trim()}`.trim(),phone:f.phone.trim(),email:f.email.trim(),club_name:f.club_name.trim()};
+    const r=f.playerId
+      ? await supabase.from('players').update(data).eq('id',f.playerId)
+      : await supabase.from('players').insert(data);
+    if(r.error){setMsg(r.error.message);return;}
+    setModal(null);await loadPlayerDB();
+    if(selected&&f.addToCompetition){
+      const pid=f.playerId || r.data?.[0]?.id;
+      if(pid) await addExistingPlayerToCompetition({...data,id:pid});
+    } else setMsg(f.playerId?'Player updated.':'Player added to player database.');
+  }
+
   async function removePlayer(p){if(!confirm(`Remove ${p.players?.display_name || `${p.players?.first_name||''} ${p.players?.last_name||''}`.trim() || 'this player'} from this competition?`))return;
     const {error}=await supabase.from('competition_players').delete().eq('id',p.id);if(error)setMsg(error.message);else load(selected)}
   async function checkin(p){await supabase.from('competition_players').update({checked_in:!p.checked_in}).eq('id',p.id);load(selected)}
@@ -116,6 +144,71 @@ export default function Home() {
   function playerName(id){
     const p=players.find(x=>x.player_id===id)?.players;
     return p?.display_name || `${p?.first_name||''} ${p?.last_name||''}`.trim() || 'TBC';
+  }
+
+  async function generateDraw(settings=drawSettings){
+    if(!selected)return;
+    const checkedPlayers=players.filter(p=>p.checked_in).map(p=>p.player_id).filter(Boolean);
+    if(checkedPlayers.length<2){setMsg('Check in at least 2 players before generating matches.');return;}
+
+    if(matches.length){
+      if(matches.some(m=>['completed','in_progress','active'].includes(m.status))){
+        setMsg('This competition already has matches in progress or completed. A new draw cannot replace them.');
+        return;
+      }
+      if(!window.confirm('Replace the existing scheduled draw? This removes the current scheduled matches and creates a new draw.'))return;
+      const {error}=await supabase.from('competition_matches').delete().eq('competition_id',selected.id);
+      if(error){setMsg(error.message);return;}
+    }
+
+    const race=Number(settings.race_to||selected.default_race_to||3);
+    let ordered=[...checkedPlayers];
+    if(settings.type==='Random Draw') ordered.sort(()=>Math.random()-0.5);
+
+    if(settings.type==='Round Robin'){
+      const rows=[]; let n=1;
+      for(let i=0;i<ordered.length;i++) for(let j=i+1;j<ordered.length;j++)
+        rows.push({competition_id:selected.id,match_number:n++,round_number:1,player1_id:ordered[i],player2_id:ordered[j],race_to:race,status:'scheduled',score1:0,score2:0,table_id:null});
+      const {error}=await supabase.from('competition_matches').insert(rows);
+      if(error){setMsg(`Could not create draw: ${error.message}`);return;}
+      await load(selected);setModal(null);setMsg(`Round Robin created for ${ordered.length} players.`);return;
+    }
+
+    const size=2**Math.ceil(Math.log2(ordered.length));
+    const rounds=Math.log2(size);
+    const byRound=[];
+    let n=1;
+    for(let r=1;r<=rounds;r++){
+      const count=size/(2**r), arr=[];
+      for(let k=0;k<count;k++){
+        const row={id:crypto.randomUUID(),competition_id:selected.id,match_number:n++,round_number:r,player1_id:null,player2_id:null,race_to:race,status:'waiting',score1:0,score2:0,table_id:null,winner_id:null,loser_id:null,next_match_id:null,next_slot:null};
+        arr.push(row);
+      }
+      byRound.push(arr);
+    }
+    for(let i=0;i<byRound[0].length;i++){
+      const row=byRound[0][i];
+      row.player1_id=ordered[i*2]||null; row.player2_id=ordered[i*2+1]||null;
+      if(row.player1_id && row.player2_id) row.status='scheduled';
+      else if(row.player1_id || row.player2_id){row.status='bye';row.winner_id=row.player1_id||row.player2_id;}
+    }
+    for(let r=0;r<byRound.length-1;r++){
+      for(let k=0;k<byRound[r].length;k++){
+        const target=byRound[r+1][Math.floor(k/2)];
+        byRound[r][k].next_match_id=target.id; byRound[r][k].next_slot=(k%2)+1;
+        if(byRound[r][k].status==='bye' && byRound[r][k].winner_id){
+          if(byRound[r][k].next_slot===1) target.player1_id=byRound[r][k].winner_id;
+          else target.player2_id=byRound[r][k].winner_id;
+        }
+      }
+      for(const m of byRound[r+1]) if(m.player1_id&&m.player2_id)m.status='scheduled';
+    }
+    const final=byRound.at(-1)[0];
+    if(final.player1_id&&final.player2_id) final.status='scheduled';
+
+    const {error}=await supabase.from('competition_matches').insert(byRound.flat());
+    if(error){setMsg(`Could not create draw: ${error.message}`);return;}
+    await load(selected);setModal(null);setMsg(`${settings.type} draw created for ${ordered.length} players.`);
   }
 
   async function generateKnockout(){
@@ -187,11 +280,12 @@ export default function Home() {
   const checked=players.filter(p=>p.checked_in).length;
   return <><style>{css}</style><header><div><h1>🎱 PottersMate</h1><small>Organiser Dashboard</small></div><button onClick={()=>supabase.auth.signOut()}>Log out</button></header>
   {msg&&<div className="notice">{msg}<button onClick={()=>setMsg('')}>✕</button></div>}
-  <div className="layout"><aside><div className="asideTitle"><b>Competitions</b><button className="primary createBtn" onClick={()=>{setSelected(null);setModal({type:'competition',c:null})}}>＋ Create competition</button></div>{competitions.map(c=><button className={selected?.id===c.id?'sel':''} key={c.id} onClick={()=>load(c)}>{c.name}<small>{c.start_date||'Date TBC'} · {c.venue||''}</small></button>)}</aside>
+  <div className="layout"><aside><div className="asideTitle"><b>Competitions</b><button className="primary createBtn" onClick={()=>{setSelected(null);setModal({type:'competition',c:null})}}>＋ Create competition</button><button onClick={()=>setModal({type:'playerdb'})}>👥 Player database</button></div>{competitions.map(c=><button className={selected?.id===c.id?'sel':''} key={c.id} onClick={()=>load(c)}>{c.name}<small>{c.start_date||'Date TBC'} · {c.venue||''}</small></button>)}</aside>
   {!selected?<section className="empty"><h2>Select a competition</h2><p>Manage players, tables and match assignments.</p></section>:
   <section className="content"><div className="hero"><div><h2>{selected.name}</h2><p>{selected.venue} · {selected.start_date||'Date TBC'}</p><div className="settingsSummary"><span><b>Format:</b> {selected.format||'Not set'}</span><span><b>Rules:</b> {selected.rules||'Not set'}</span><span><b>Default race:</b> Race to {selected.default_race_to||3}</span></div></div><div className="heroRight"><button className="primary" onClick={()=>setModal({type:'competition',c:selected})}>⚙️ Edit competition</button><button className="danger" onClick={deleteCompetition}>🗑️ Delete competition</button><div className="stats"><b>{players.length} players</b><b>{checked} checked in</b><b>{tables.length} tables</b></div></div></div>
 
   <Panel title="Players" add={()=>setModal({type:'player'})} addText="＋ Add player">
+    <div className="drawTools"><button onClick={()=>setModal({type:'playerdb'})}>👥 Add from player database</button></div>
     {players.map(p=><div className="row" key={p.id}><div><b>{p.players?.display_name || `${p.players?.first_name||''} ${p.players?.last_name||''}`.trim() || 'Unnamed Player'}</b><small>{p.players?.club_name||'No club'}{p.players?.phone?` · ${p.players.phone}`:''}</small></div><div className="actions"><button onClick={()=>setModal({type:'player',p})}>✏️ Edit</button><button onClick={()=>checkin(p)}>{p.checked_in?'✓ Checked in':'Check in'}</button><button className="danger" onClick={()=>removePlayer(p)}>🗑️ Remove</button></div></div>)}
   </Panel>
 
@@ -202,7 +296,7 @@ export default function Home() {
 
   <Panel title="Matches & Table Assignment">
     <div className="drawTools">
-      {(selected.format||'').toLowerCase()==='knockout'&&<button className="primary" onClick={generateKnockout}>🎱 {matches.length?'Regenerate':'Generate'} Knockout Draw</button>}
+      <button className="primary" onClick={()=>setModal({type:'draw'})}>🎱 {matches.length?'Edit / Regenerate Draw':'Create Draw'}</button>
       {matches.length===0&&<p className="muted">No matches created yet.</p>}
     </div>
     {matches.map(m=><div className="row" key={m.id}>
@@ -212,6 +306,9 @@ export default function Home() {
   </Panel>
   </section>}</div>
   {qrData&&<QRModal data={qrData} close={()=>setQrData(null)}/>}
+  {modal?.type==='playerdb'&&<PlayerDatabaseModal players={playerDB} currentPlayers={players} close={()=>setModal(null)} add={addExistingPlayerToCompetition} edit={(p)=>setModal({type:'masterPlayer',p})} newPlayer={()=>setModal({type:'masterPlayer',p:null})}/>}
+  {modal?.type==='draw'&&<DrawModal selected={selected} players={players} settings={drawSettings} setSettings={setDrawSettings} close={()=>setModal(null)} generate={generateDraw}/>}
+  {modal?.type==='masterPlayer'&&<MasterPlayerModal p={modal.p} allowAdd={!!selected} close={()=>setModal(null)} save={saveMasterPlayer}/>}
   {modal?.type==='player'&&<PlayerModal p={modal.p} close={()=>setModal(null)} save={savePlayer}/>}
   {modal?.type==='table'&&<TableModal t={modal.t} close={()=>setModal(null)} save={saveTable}/>}
   {modal?.type==='competition'&&<CompetitionModal c={modal.c} close={()=>setModal(null)} save={saveCompetition}/>}
@@ -219,6 +316,26 @@ export default function Home() {
 }
 
 function Panel({title,add,addText,children}){return <div className="panel"><div className="ph"><h3>{title}</h3>{add&&<button className="primary" onClick={add}>{addText}</button>}</div>{children}</div>}
+function DrawModal({selected,players,settings,setSettings,close,generate}){
+  const checked=players.filter(p=>p.checked_in).length;
+  return <Modal title="Draw Builder" close={close}>
+    <p className="muted"><b>{checked}</b> checked-in players.</p>
+    <label>Draw type<select value={settings.type} onChange={e=>setSettings({...settings,type:e.target.value})}>
+      <option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Seeded Draw</option>
+    </select></label>
+    <label>Race length<select value={settings.race_to} onChange={e=>setSettings({...settings,race_to:Number(e.target.value)})}>
+      {[1,2,3,5,7,9].map(n=><option key={n} value={n}>Race to {n}</option>)}
+    </select></label>
+    <div className="settingNote">
+      {settings.type==='Knockout'&&'Winners automatically progress through later rounds.'}
+      {settings.type==='Round Robin'&&'Every checked-in player plays every other player once.'}
+      {settings.type==='Random Draw'&&'Players are shuffled before the knockout draw.'}
+      {settings.type==='Seeded Draw'&&'Players stay in their current checked-in order as the seed order.'}
+    </div>
+    <div className="ma"><button type="button" onClick={close}>Cancel</button><button className="primary" disabled={checked<2} onClick={()=>generate(settings)}>Generate Draw</button></div>
+  </Modal>
+}
+
 function QRModal({data,close}){
   function printQR(){
     const w=window.open('', '_blank', 'width=500,height=650');
@@ -241,7 +358,42 @@ function QRModal({data,close}){
   </Modal>
 }
 
+function PlayerDatabaseModal({players,currentPlayers,close,add,edit,newPlayer}){
+  const [q,setQ]=useState('');
+  const current=new Set(currentPlayers.map(x=>x.player_id));
+  const filtered=players.filter(p=>{
+    const text=`${p.display_name||''} ${p.first_name||''} ${p.last_name||''} ${p.club_name||''} ${p.phone||''}`.toLowerCase();
+    return text.includes(q.toLowerCase());
+  });
+  return <Modal title="Player database" close={close}>
+    <div className="dbTop"><input placeholder="Search players..." value={q} onChange={e=>setQ(e.target.value)}/><button className="primary" onClick={newPlayer}>＋ New player</button></div>
+    <p className="muted">{players.length} player{players.length===1?'':'s'} in your database.</p>
+    <div className="dbList">
+      {filtered.length===0&&<p className="muted">No players found.</p>}
+      {filtered.map(p=><div className="row" key={p.id}>
+        <div><b>{p.display_name||`${p.first_name||''} ${p.last_name||''}`.trim()}</b><small>{p.club_name||'No club'}{p.phone?` · ${p.phone}`:''}{p.email?` · ${p.email}`:''}</small></div>
+        <div className="actions"><button onClick={()=>edit(p)}>✏️ Edit</button>{current.has(p.id)?<button disabled>✓ In competition</button>:<button className="primary" onClick={()=>add(p)}>＋ Add</button>}</div>
+      </div>)}
+    </div>
+  </Modal>
+}
+
 function PlayerModal({p,close,save}){const x=p?.players||{};const[f,setF]=useState({playerId:x.id||'',first_name:x.first_name||'',last_name:x.last_name||'',phone:x.phone||'',email:x.email||'',club_name:x.club_name||''});return <Modal title={p?'Edit player':'Add player'} close={close}><form onSubmit={e=>{e.preventDefault();save(f)}}><label>First name<input required value={f.first_name} onChange={e=>setF({...f,first_name:e.target.value})}/></label><label>Last name<input required value={f.last_name} onChange={e=>setF({...f,last_name:e.target.value})}/></label><label>Phone<input value={f.phone} onChange={e=>setF({...f,phone:e.target.value})}/></label><label>Email<input type="email" value={f.email} onChange={e=>setF({...f,email:e.target.value})}/></label><label>Club<input value={f.club_name} onChange={e=>setF({...f,club_name:e.target.value})}/></label><div className="ma"><button type="button" onClick={close}>Cancel</button><button className="primary">Save changes</button></div></form></Modal>}
+function MasterPlayerModal({p,close,save,allowAdd}){
+  const[f,setF]=useState({playerId:p?.id||'',first_name:p?.first_name||'',last_name:p?.last_name||'',phone:p?.phone||'',email:p?.email||'',club_name:p?.club_name||'',addToCompetition:false});
+  return <Modal title={p?'Edit player':'New player'} close={close}>
+    <form onSubmit={e=>{e.preventDefault();save(f)}}>
+      <label>First name<input required value={f.first_name} onChange={e=>setF({...f,first_name:e.target.value})}/></label>
+      <label>Last name<input required value={f.last_name} onChange={e=>setF({...f,last_name:e.target.value})}/></label>
+      <label>Phone<input value={f.phone} onChange={e=>setF({...f,phone:e.target.value})}/></label>
+      <label>Email<input type="email" value={f.email} onChange={e=>setF({...f,email:e.target.value})}/></label>
+      <label>Club<input value={f.club_name} onChange={e=>setF({...f,club_name:e.target.value})}/></label>
+      {allowAdd&&<label className="check"><input type="checkbox" checked={f.addToCompetition} onChange={e=>setF({...f,addToCompetition:e.target.checked})}/> Add to current competition</label>}
+      <div className="ma"><button type="button" onClick={close}>Cancel</button><button className="primary">{p?'Save player':'Create player'}</button></div>
+    </form>
+  </Modal>
+}
+
 function CompetitionModal({c,close,save}){
   const[f,setF]=useState({
     name:c?.name||'',venue:c?.venue||'',start_date:c?.start_date||'',
@@ -268,4 +420,4 @@ function CompetitionModal({c,close,save}){
 
 function TableModal({t,close,save}){const[f,setF]=useState({table_number:t?.table_number||'',table_type:t?.table_type||'Standard',notes:t?.notes||'',is_accessible:!!t?.is_accessible,status:t?.status||'available'});return <Modal title={t?'Edit table':'Add table'} close={close}><form onSubmit={e=>{e.preventDefault();save(f,t)}}><label>Table number<input required type="number" min="1" value={f.table_number} onChange={e=>setF({...f,table_number:e.target.value})}/></label><label>Table type<select value={f.table_type} onChange={e=>setF({...f,table_type:e.target.value})}><option>Standard</option><option>Accessible</option><option>Reserved / Unavailable</option></select></label><label className="check"><input type="checkbox" checked={f.is_accessible} onChange={e=>setF({...f,is_accessible:e.target.checked})}/> Accessible table ♿</label><label>Table notes<textarea value={f.notes} onChange={e=>setF({...f,notes:e.target.value})}/></label><div className="ma"><button type="button" onClick={close}>Cancel</button><button className="primary">Save</button></div></form></Modal>}
 
-const css=`*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:#f5f7fa;color:#172033}button,input,select,textarea{font:inherit}button{cursor:pointer;border:1px solid #d8dee8;background:#fff;border-radius:8px;padding:9px 12px}.primary{background:#172033;color:#fff;border-color:#172033}.danger{color:#b42318}.link{border:0;background:none;color:#315fdb}.auth{min-height:100vh;display:grid;place-items:center}.card{background:#fff;padding:36px;border-radius:18px;box-shadow:0 12px 40px #0001;width:min(430px,92vw)}.card form{display:grid;gap:12px}.card input{padding:12px;border:1px solid #ccd3df;border-radius:8px}.error{color:#b42318}header{background:#fff;border-bottom:1px solid #e4e8ef;padding:15px 24px;display:flex;justify-content:space-between;align-items:center}header h1{margin:0;font-size:25px}.layout{display:grid;grid-template-columns:260px 1fr;max-width:1400px;margin:auto;min-height:calc(100vh - 72px)}aside{background:#fff;border-right:1px solid #e4e8ef;padding:15px}.asideTitle{display:flex;flex-direction:column;gap:10px;margin-bottom:10px}.createBtn{width:100%;font-weight:700}aside button{display:block;width:100%;text-align:left;border:0;margin-top:6px}aside small{display:block;color:#758096;margin-top:4px}.sel{background:#eef2ff}.content{padding:22px;max-width:1100px}.hero{background:#fff;border:1px solid #e3e7ee;border-radius:14px;padding:20px;display:flex;justify-content:space-between;margin-bottom:18px}.hero h2{margin:0 0 6px}.hero p{margin:0;color:#6a7587}.heroRight{display:flex;flex-direction:column;align-items:flex-end;gap:12px}.settingsSummary{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px;color:#667085;font-size:13px}.settingsSummary span{background:#f5f7fa;padding:7px 9px;border-radius:7px}.settingNote{background:#f5f7fa;border:1px solid #e3e7ee;border-radius:8px;padding:10px;color:#667085;font-size:13px;line-height:1.4}.stats{display:flex;gap:15px;align-items:center;flex-wrap:wrap}.stats b{background:#f5f7fa;padding:10px 12px;border-radius:8px}.panel{background:#fff;border:1px solid #e3e7ee;border-radius:14px;margin-bottom:18px;padding:16px}.ph{display:flex;justify-content:space-between;align-items:center}.ph h3{margin:0}.row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid #edf0f4}.row small{display:block;color:#707b8d;margin-top:4px}.actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap}.qr{border:1px dashed #aab3c2;border-radius:6px;padding:8px;text-align:center;font-size:11px}.qrLarge{display:flex;justify-content:center;align-items:center;padding:8px}.qrLarge img{width:320px;height:320px;max-width:100%;image-rendering:auto}.scoreLink{padding:9px 12px;border:1px solid #d8dee8;border-radius:8px;text-decoration:none;color:#172033;background:#fff}.muted{color:#778194}.drawTools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}.empty{padding:70px 30px}.notice{margin:14px auto;padding:10px 14px;background:#fff4e5;border:1px solid #ffd7a3;width:94%;border-radius:8px}.notice button{float:right;padding:2px 7px}.backdrop{position:fixed;inset:0;background:#0006;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:18px}.modal{background:#fff;width:min(520px,95vw);max-height:calc(100vh - 36px);overflow-y:auto;border-radius:14px;padding:18px;margin:auto 0}.mh{display:flex;justify-content:space-between;align-items:center}.modal form{display:grid;gap:12px}.modal label{display:grid;gap:5px;font-weight:600}.modal input,.modal select,.modal textarea{padding:10px;border:1px solid #ccd3df;border-radius:8px}.modal textarea{min-height:80px}.check{display:flex!important;align-items:center;gap:8px}.ma{display:flex;justify-content:flex-end;gap:8px}@media(max-width:850px){.heroRight{align-items:flex-start;margin-top:15px}.layout{grid-template-columns:1fr}aside{border-right:0;border-bottom:1px solid #e4e8ef}.hero{display:block}.row{flex-direction:column;align-items:flex-start}.actions{width:100%}}`;
+const css=`*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:#f5f7fa;color:#172033}button,input,select,textarea{font:inherit}button{cursor:pointer;border:1px solid #d8dee8;background:#fff;border-radius:8px;padding:9px 12px}.primary{background:#172033;color:#fff;border-color:#172033}.danger{color:#b42318}.link{border:0;background:none;color:#315fdb}.auth{min-height:100vh;display:grid;place-items:center}.card{background:#fff;padding:36px;border-radius:18px;box-shadow:0 12px 40px #0001;width:min(430px,92vw)}.card form{display:grid;gap:12px}.card input{padding:12px;border:1px solid #ccd3df;border-radius:8px}.error{color:#b42318}header{background:#fff;border-bottom:1px solid #e4e8ef;padding:15px 24px;display:flex;justify-content:space-between;align-items:center}header h1{margin:0;font-size:25px}.layout{display:grid;grid-template-columns:260px 1fr;max-width:1400px;margin:auto;min-height:calc(100vh - 72px)}aside{background:#fff;border-right:1px solid #e4e8ef;padding:15px}.asideTitle{display:flex;flex-direction:column;gap:10px;margin-bottom:10px}.createBtn{width:100%;font-weight:700}aside button{display:block;width:100%;text-align:left;border:0;margin-top:6px}aside small{display:block;color:#758096;margin-top:4px}.sel{background:#eef2ff}.content{padding:22px;max-width:1100px}.hero{background:#fff;border:1px solid #e3e7ee;border-radius:14px;padding:20px;display:flex;justify-content:space-between;margin-bottom:18px}.hero h2{margin:0 0 6px}.hero p{margin:0;color:#6a7587}.heroRight{display:flex;flex-direction:column;align-items:flex-end;gap:12px}.settingsSummary{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px;color:#667085;font-size:13px}.settingsSummary span{background:#f5f7fa;padding:7px 9px;border-radius:7px}.dbTop{display:flex;gap:8px;margin-bottom:10px}.dbTop input{flex:1}.dbList{max-height:55vh;overflow:auto}.settingNote{background:#f5f7fa;border:1px solid #e3e7ee;border-radius:8px;padding:10px;color:#667085;font-size:13px;line-height:1.4}.stats{display:flex;gap:15px;align-items:center;flex-wrap:wrap}.stats b{background:#f5f7fa;padding:10px 12px;border-radius:8px}.panel{background:#fff;border:1px solid #e3e7ee;border-radius:14px;margin-bottom:18px;padding:16px}.ph{display:flex;justify-content:space-between;align-items:center}.ph h3{margin:0}.row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid #edf0f4}.row small{display:block;color:#707b8d;margin-top:4px}.actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap}.qr{border:1px dashed #aab3c2;border-radius:6px;padding:8px;text-align:center;font-size:11px}.qrLarge{display:flex;justify-content:center;align-items:center;padding:8px}.qrLarge img{width:320px;height:320px;max-width:100%;image-rendering:auto}.scoreLink{padding:9px 12px;border:1px solid #d8dee8;border-radius:8px;text-decoration:none;color:#172033;background:#fff}.muted{color:#778194}.drawTools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}.empty{padding:70px 30px}.notice{margin:14px auto;padding:10px 14px;background:#fff4e5;border:1px solid #ffd7a3;width:94%;border-radius:8px}.notice button{float:right;padding:2px 7px}.backdrop{position:fixed;inset:0;background:#0006;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:18px}.modal{background:#fff;width:min(520px,95vw);max-height:calc(100vh - 36px);overflow-y:auto;border-radius:14px;padding:18px;margin:auto 0}.mh{display:flex;justify-content:space-between;align-items:center}.modal form{display:grid;gap:12px}.modal label{display:grid;gap:5px;font-weight:600}.modal input,.modal select,.modal textarea{padding:10px;border:1px solid #ccd3df;border-radius:8px}.modal textarea{min-height:80px}.check{display:flex!important;align-items:center;gap:8px}.ma{display:flex;justify-content:flex-end;gap:8px}@media(max-width:850px){.heroRight{align-items:flex-start;margin-top:15px}.layout{grid-template-columns:1fr}aside{border-right:0;border-bottom:1px solid #e4e8ef}.hero{display:block}.row{flex-direction:column;align-items:flex-start}.actions{width:100%}}`;

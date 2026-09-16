@@ -19,3 +19,11 @@ Fixes the remaining `missing FROM-clause entry for table cm2` error in the secon
 
 ## V7.5
 For Race to 1 matches, the QR scorer asks how many balls the winner had remaining (0–7) before completing the match. Longer races keep the existing frame-only scoring screen.
+
+
+## V8.0
+Adds a Draw Builder for Knockout, Round Robin, Random Draw and Seeded Draw, with selectable race length. Knockout draws retain automatic winner progression.
+
+
+## V8.1
+Adds a master player database using the existing `players` table. Organisers can search players, edit records, create new players, and add existing players to a competition without re-entering their details.
