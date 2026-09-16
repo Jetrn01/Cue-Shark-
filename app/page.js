@@ -56,11 +56,40 @@ function ReverseCrossoverPreview({players = [], groupCount = 2}) {
   </div>
 }
 
+
+function sessionScoreIncluded(value){
+  return value !== 'casual';
+}
+function SessionTypeControl({value, onChange}){
+  return <div className="sessionTypeControl">
+    <label>Session type</label>
+    <select value={value || 'season'} onChange={e=>onChange(e.target.value)}>
+      <option value="season">🏆 Season / Points session</option>
+      <option value="casual">🎱 Casual night — excluded from season score</option>
+    </select>
+    <small>Casual results are still saved in match history, but wins, losses and points are not counted toward the recurring season standings.</small>
+  </div>
+}
+
+
+function SeasonLengthControl({value, onChange}){
+  const n = Math.max(1, Math.min(52, Number(value) || 8));
+  return <div className="seasonLengthControl">
+    <label>Season length</label>
+    <div className="seasonLengthRow">
+      <input type="number" min="1" max="52" value={n}
+        onChange={e=>onChange(Math.max(1, Math.min(52, Number(e.target.value)||1)))}/>
+      <span>weeks</span>
+    </div>
+    <small>Choose any season length from 1 to 52 weeks. Casual sessions can still be run between or after season weeks without affecting the season score.</small>
+  </div>
+}
+
 export default function Home() {
   const [session,setSession]=useState(null), [mode,setMode]=useState('login');
   const [email,setEmail]=useState(''),[password,setPassword]=useState(''),[authMsg,setAuthMsg]=useState('');
   const [competitions,setCompetitions]=useState([]),[selected,setSelected]=useState(null);
-  const [templates,setTemplates]=useState([]);
+  const [templates,setTemplates]=useState([]), [seasonCompetitions,setSeasonCompetitions]=useState([]);
   const [players,setPlayers]=useState([]),[tables,setTables]=useState([]),[matches,setMatches]=useState([]);
   const [modal,setModal]=useState(null),[msg,setMsg]=useState('');
   const [drawSettings,setDrawSettings]=useState({type:'Knockout',race_to:3,group_count:4});
@@ -88,7 +117,13 @@ export default function Home() {
       supabase.from('competition_players').select('id,player_id,checked_in,players(id,first_name,last_name,display_name,phone,email,club_name,requires_accessible_table)').eq('competition_id',c.id),
       supabase.from('competition_matches').select('*').eq('competition_id',c.id).order('match_number'),
       supabase.from('tournament_tables').select('*').eq('competition_id',c.id).order('table_number')
-    ]); setPlayers(p.data||[]);setMatches(m.data||[]);setTables(t.data||[])}
+    ]);
+    setPlayers(p.data||[]);setMatches(m.data||[]);setTables(t.data||[]);
+    if(c.recurring_template_id && c.season_id){
+      const {data:sc}=await supabase.from('competitions').select('*').eq('recurring_template_id',c.recurring_template_id).eq('season_id',c.season_id).order('season_week',{ascending:true});
+      setSeasonCompetitions(sc||[]);
+    } else setSeasonCompetitions([]);
+  }
 
   async function saveCompetition(f){
     const data={
@@ -132,8 +167,12 @@ export default function Home() {
     const data={
       name:f.name.trim(), venue:f.venue.trim(), day_of_week:Number(f.day_of_week),
       format:f.format, rules:f.rules, default_race_to:Number(f.default_race_to),
-      status:f.status, is_active:true, organiser_id:session.user.id
+      status:f.status, is_active:true, organiser_id:session.user.id,
+      season_enabled:!!f.season_enabled,
+      season_length_weeks:Math.max(1,Math.min(52,Number(f.season_length_weeks)||8)),
+      season_id:old?.season_id || undefined
     };
+    if(!data.season_id) delete data.season_id;
     const r=old
       ? await supabase.from('competition_templates').update(data).eq('id',old.id)
       : await supabase.from('competition_templates').insert(data);
@@ -141,14 +180,39 @@ export default function Home() {
     setModal(null); await loadTemplates(); setMsg(`Recurring tournament "${data.name}" saved.`);
   }
 
-  async function startFromTemplate(t){
+  async function startFromTemplate(t,sessionType='season'){
     const startDate=nextRecurringDate(t.day_of_week);
-    const data={name:t.name,venue:t.venue,start_date:startDate,format:t.format,rules:t.rules,status:'active',default_race_to:t.default_race_to};
+    let seasonWeek=null;
+    const seasonId=t.season_id||null;
+    if(sessionType==='season' && t.season_enabled!==false){
+      const {data:prior,error:priorError}=await supabase.from('competitions').select('season_week').eq('recurring_template_id',t.id).eq('season_id',seasonId).eq('session_type','season').order('season_week',{ascending:false}).limit(1);
+      if(priorError){setMsg(`Could not check season progress: ${priorError.message}`);return;}
+      seasonWeek=(prior?.[0]?.season_week||0)+1;
+      const total=Number(t.season_length_weeks||8);
+      if(seasonWeek>total){setMsg(`The ${total}-week season is complete. Start a casual night or begin a new season.`);return;}
+    }
+    const data={
+      name:sessionType==='casual'?`${t.name} — Casual`:t.name,
+      venue:t.venue,start_date:startDate,format:t.format,rules:t.rules,status:'active',
+      default_race_to:t.default_race_to,recurring_template_id:t.id,
+      session_type:sessionType,season_week:sessionType==='season'?seasonWeek:null,
+      season_id:sessionType==='season'?seasonId:null
+    };
     const {data:created,error}=await supabase.from('competitions').insert(data).select('*').single();
     if(error){setMsg(`Could not start tournament: ${error.message}`);return;}
     await loadCompetitions();
     if(created) await load(created);
-    setMsg(`"${created.name}" started for ${created.start_date}. Add this week's players, check them in, then create the draw.`);
+    setModal(null);
+    if(sessionType==='casual') setMsg(`Casual night started for ${created.start_date}. Results will be saved but excluded from the season score.`);
+    else setMsg(`Season week ${seasonWeek} of ${t.season_length_weeks||8} started for ${created.start_date}. Add this week's players, check them in, then create the draw.`);
+  }
+
+  async function startNewSeason(t){
+    const seasonId=crypto.randomUUID();
+    const {error}=await supabase.from('competition_templates').update({season_id:seasonId}).eq('id',t.id);
+    if(error){setMsg(`Could not start a new season: ${error.message}`);return;}
+    await loadTemplates();
+    await startFromTemplate({...t,season_id:seasonId},'season');
   }
 
   async function deactivateTemplate(t){
@@ -430,7 +494,7 @@ export default function Home() {
       vals.sort((a,b)=>b.wins-a.wins || (b.for-b.against)-(a.for-a.against) || b.for-a.for || a.id.localeCompare(b.id));
       ranked[g]=vals;
     }
-    const pairs=[]; for(let i=0;i<groupNames.length/2;i++)pairs.push([groupNames[i],groupNames[groupNames.length-1-i]]);
+    const pairs=[]; for(let i=0;i<groupNames.length;i+=2)pairs.push([groupNames[i],groupNames[i+1]]);
     const crossover=[]; let matchNo=Math.max(...matches.map(m=>m.match_number||0))+1;
     for(const [g1,g2] of pairs){
       const left=ranked[g1],right=ranked[g2],len=Math.max(left.length,right.length);
@@ -452,7 +516,7 @@ export default function Home() {
     }
     const {error}=await supabase.from('competition_matches').insert(all);
     if(error){setMsg(`Could not create reverse crossover: ${error.message}`);return;}
-    await load(selected);setMsg(`Reverse crossover created for ${groupNames.length} groups. Highest finishes play the lowest finishes in their paired group.`);
+    await load(selected);setMsg(`Reverse crossover created for ${groupNames.length} groups. Groups are paired A vs B, C vs D, etc., with highest finishes playing lowest finishes in the opposing group.`);
   }
 
   async function generateKnockout(){
@@ -691,7 +755,15 @@ export default function Home() {
   {msg&&<div className="notice">{msg}<button onClick={()=>setMsg('')}>✕</button></div>}
   <div className="layout"><aside><div className="asideTitle"><b>Competitions</b><button className="primary createBtn" onClick={()=>{setSelected(null);setModal({type:'competition',c:null})}}>＋ Create competition</button><button onClick={()=>setModal({type:'templates'})}>🔄 Recurring tournaments</button><button onClick={()=>setModal({type:'playerdb'})}>👥 Player database</button></div>{competitions.map(c=><button className={selected?.id===c.id?'sel':''} key={c.id} onClick={()=>load(c)}>{c.name}<small>{c.start_date||'Date TBC'} · {c.venue||''}</small></button>)}</aside>
   {!selected?<section className="empty"><h2>Select a competition</h2><p>Manage players, tables and match assignments.</p></section>:
-  <section className="content"><div className="hero"><div><h2>{selected.name}</h2><p>{selected.venue} · {selected.start_date||'Date TBC'}</p><div className="settingsSummary"><span><b>Format:</b> {selected.format||'Not set'}</span><span><b>Rules:</b> {selected.rules||'Not set'}</span><span><b>Default race:</b> Race to {selected.default_race_to||3}</span></div></div><div className="heroRight"><button className="primary" onClick={()=>setModal({type:'competition',c:selected})}>⚙️ Edit competition</button><button className="danger" onClick={deleteCompetition}>🗑️ Delete competition</button><div className="stats"><b>{players.length} players</b><b>{checked} checked in</b><b>{tables.length} tables</b></div></div></div>
+  <section className="content"><div className="hero"><div><h2>{selected.name}</h2><p>{selected.venue} · {selected.start_date||'Date TBC'}</p><div className="settingsSummary"><span><b>Format:</b> {selected.format||'Not set'}</span><span><b>Rules:</b> {selected.rules||'Not set'}</span><span><b>Default race:</b> Race to {selected.default_race_to||3}</span></div>{selected.recurring_template_id&&<div className="sessionBanner">{selected.session_type==='casual'?<><strong>🎱 Casual night</strong><span>Excluded from season standings</span></>:<><strong>🏆 Season week {selected.season_week||'?'}</strong><span>Counts toward season standings</span></>}</div>}</div><div className="heroRight"><button className="primary" onClick={()=>setModal({type:'competition',c:selected})}>⚙️ Edit competition</button><button className="danger" onClick={deleteCompetition}>🗑️ Delete competition</button><div className="stats"><b>{players.length} players</b><b>{checked} checked in</b><b>{tables.length} tables</b></div></div></div>
+
+  {selected.recurring_template_id&&<Panel title="Season">
+    <div className="seasonPanelIntro"><strong>{selected.session_type==='casual'?'🎱 Casual night':'🏆 Season session'}</strong><span>{selected.session_type==='casual'?'Results are saved in match history but excluded from season standings.':'Only season sessions count toward this recurring season.'}</span></div>
+    {seasonCompetitions.length>0&&<div className="seasonSessionList">
+      {seasonCompetitions.filter(c=>c.session_type==='season').map(c=><div className={`seasonSession ${c.id===selected.id?'current':''}`} key={c.id}><strong>Week {c.season_week||'?'}</strong><span>{c.start_date||'Date TBC'}</span><em>{c.id===selected.id?'Current':'Season session'}</em></div>)}
+    </div>}
+    {selected.session_type==='casual'&&<div className="casualNote">Casual results do <b>not</b> alter season wins, losses or points.</div>}
+  </Panel>}
 
   <Panel title="Players" add={()=>setModal({type:'player'})} addText="＋ Add player">
     <div className="drawTools"><button onClick={()=>setModal({type:'playerdb'})}>👥 Add from player database</button></div>
@@ -728,18 +800,18 @@ export default function Home() {
   </section>}</div>
   {qrData&&<QRModal data={qrData} close={()=>setQrData(null)}/>}
   {modal?.type==='playerdb'&&<PlayerDatabaseModal players={playerDB} currentPlayers={players} close={()=>setModal(null)} add={addExistingPlayerToCompetition} edit={(p)=>setModal({type:'masterPlayer',p})} deletePlayer={deleteMasterPlayer} newPlayer={()=>setModal({type:'masterPlayer',p:null})}/>}
-  {modal?.type==='draw'&&<DrawModal selected={selected} players={players} settings={drawSettings} setSettings={setDrawSettings} close={()=>setModal(null)} generate={generateDraw}/>}
+  {modal?.type==='draw'&&<DrawModal selected={selected} players={players} settings={drawSettings} setSettings={setDrawSettings} close={()=>setModal(null)} generate={generateDraw} generateGroups={generateGroupsReverseCrossover}/>}
   {modal?.type==='masterPlayer'&&<MasterPlayerModal p={modal.p} allowAdd={!!selected} close={()=>setModal(null)} save={saveMasterPlayer}/>}
   {modal?.type==='player'&&<PlayerModal p={modal.p} close={()=>setModal(null)} save={savePlayer}/>}
   {modal?.type==='table'&&<TableModal t={modal.t} close={()=>setModal(null)} save={saveTable}/>}
   {modal?.type==='competition'&&<CompetitionModal c={modal.c} close={()=>setModal(null)} save={saveCompetition}/>}
-  {modal?.type==='templates'&&<RecurringModal templates={templates} close={()=>setModal(null)} newTemplate={()=>setModal({type:'template'})} edit={t=>setModal({type:'template',t})} start={startFromTemplate} deactivate={deactivateTemplate}/>}
+  {modal?.type==='templates'&&<RecurringModal templates={templates} close={()=>setModal(null)} newTemplate={()=>setModal({type:'template'})} edit={t=>setModal({type:'template',t})} start={startFromTemplate} newSeason={startNewSeason} deactivate={deactivateTemplate}/>}
   {modal?.type==='template'&&<TemplateModal t={modal.t} close={()=>setModal(null)} save={saveTemplate}/>}
   </>;
 }
 
 function Panel({title,add,addText,children}){return <div className="panel"><div className="ph"><h3>{title}</h3>{add&&<button className="primary" onClick={add}>{addText}</button>}</div>{children}</div>}
-function DrawModal({selected,players,settings,setSettings,close,generate}){
+function DrawModal({selected,players,settings,setSettings,close,generate,generateGroups}){
   const checked=players.filter(p=>p.checked_in).length;
   const maxEvenGroups=Math.min(8,Math.floor(checked/2));
   const groupOptions=[2,4,6,8].filter(n=>n<=maxEvenGroups);
@@ -761,10 +833,10 @@ function DrawModal({selected,players,settings,setSettings,close,generate}){
       {settings.type==='Round Robin'&&'Every checked-in player plays every other player once.'}
       {settings.type==='Random Draw'&&'Players are shuffled before the knockout draw.'}
       {settings.type==='Seeded Draw'&&'Players stay in their current checked-in order as the seed order.'}
-      {isReverse&&`Players are split as evenly as possible into ${groupCount} groups. After the group stage, 1st plays last, 2nd plays second-last, and so on against the paired group. Odd or uneven crossover slots receive byes.`}
+      {isReverse&&`Players are split as evenly as possible into ${groupCount} groups. After the group stage, groups are paired A vs B, C vs D, etc. Within each pair, 1st plays last, 2nd plays second-last, and so on. Odd or uneven crossover slots receive byes.`}
     </div>
     {isReverse && checked>=2 && <div className="drawPreviewNote"><strong>{checked} players:</strong> {groupCount} groups of about {Math.floor(checked/groupCount)}–{Math.ceil(checked/groupCount)} players. Any crossover byes will be shown in the generated draw.</div>}
-    <div className="ma"><button type="button" onClick={close}>Cancel</button><button className="primary" disabled={checked<2 || (isReverse && (groupOptions.length===0 || !groupOptions.includes(groupCount)))} onClick={()=>isReverse?generateGroupsReverseCrossover({...settings,type:'Groups → Reverse Crossover',group_count:groupCount}):generate(settings)}>Generate Draw</button></div>
+    <div className="ma"><button type="button" onClick={close}>Cancel</button><button className="primary" disabled={checked<2 || (isReverse && (groupOptions.length===0 || !groupOptions.includes(groupCount)))} onClick={()=>isReverse?generateGroups({...settings,type:'Groups → Reverse Crossover',group_count:groupCount}):generate(settings)}>Generate Draw</button></div>
   </Modal>
 }
 
@@ -852,19 +924,31 @@ function CompetitionModal({c,close,save}){
 }
 
 function dayName(n){return ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][Number(n)]}
-function RecurringModal({templates,close,newTemplate,edit,start,deactivate}){
+function RecurringModal({templates,close,newTemplate,edit,start,deactivate,newSeason}){
   return <Modal title="Recurring tournaments" close={close}>
-    <div className="templateIntro"><strong>Set up a tournament once, then start a fresh copy each week.</strong><span>Players, check-ins, draws and results are always new for each tournament.</span></div>
+    <div className="templateIntro"><strong>Run a season from the same recurring format.</strong><span>Season sessions count toward standings. Casual sessions are saved in history but do not affect the season.</span></div>
     {templates.length===0&&<p className="muted">No recurring tournaments yet.</p>}
     {templates.map(t=><div className="templateCard" key={t.id}>
-      <div><strong>{t.name}</strong><span>{dayName(t.day_of_week)} · {t.venue||'Venue TBC'}</span><small>{t.format} · {t.rules} · Race to {t.default_race_to}</small></div>
-      <div className="actions"><button className="primary" onClick={()=>start(t)}>▶ Start this week's tournament</button><button onClick={()=>edit(t)}>✏️ Edit</button><button className="danger" onClick={()=>deactivate(t)}>Remove</button></div>
+      <div><strong>{t.name}</strong><span>{dayName(t.day_of_week)} · {t.venue||'Venue TBC'}</span><small>{t.format} · {t.rules} · Race to {t.default_race_to}</small>
+      {t.season_enabled!==false&&<small className="seasonMeta">🏆 {t.season_length_weeks||8}-week season</small>}</div>
+      <div className="actions">
+        {t.season_enabled!==false&&<button className="primary" onClick={()=>start(t,'season')}>▶ Start season week</button>}
+        <button onClick={()=>start(t,'casual')}>🎱 Start casual night</button>
+        {t.season_enabled!==false&&<button onClick={()=>newSeason(t)}>🔄 New season</button>}
+        <button onClick={()=>edit(t)}>✏️ Edit</button><button className="danger" onClick={()=>deactivate(t)}>Remove</button>
+      </div>
     </div>)}
     <div className="ma"><button type="button" onClick={newTemplate} className="primary">＋ Create recurring tournament</button></div>
   </Modal>
 }
+
 function TemplateModal({t,close,save}){
-  const[f,setF]=useState({name:t?.name||'',venue:t?.venue||'',day_of_week:t?.day_of_week??4,format:t?.format||'Knockout',rules:t?.rules||'CNZ Rules',default_race_to:t?.default_race_to||3,status:t?.status||'active'});
+  const[f,setF]=useState({
+    name:t?.name||'',venue:t?.venue||'',day_of_week:t?.day_of_week??4,
+    format:t?.format||'Knockout',rules:t?.rules||'CNZ Rules',
+    default_race_to:t?.default_race_to||3,status:t?.status||'active',
+    season_enabled:t?.season_enabled!==false,season_length_weeks:t?.season_length_weeks||8
+  });
   return <Modal title={t?'Edit recurring tournament':'Create recurring tournament'} close={close}>
     <form onSubmit={e=>{e.preventDefault();save(f,t)}}>
       <label>Tournament name<input required value={f.name} placeholder="Thursday Night 8-Ball" onChange={e=>setF({...f,name:e.target.value})}/></label>
@@ -873,7 +957,9 @@ function TemplateModal({t,close,save}){
       <label>Format<select value={f.format} onChange={e=>setF({...f,format:e.target.value})}><option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Seeded Draw</option><option>Groups → Reverse Crossover</option><option>Singles</option><option>Doubles</option><option>Teams</option><option>Custom</option></select></label>
       <label>Rules<select value={f.rules} onChange={e=>setF({...f,rules:e.target.value})}><option>CNZ Rules</option><option>International Rules</option><option>Custom</option></select></label>
       <label>Default race length<select value={f.default_race_to} onChange={e=>setF({...f,default_race_to:Number(e.target.value)})}>{[1,2,3,5,7,9].map(n=><option key={n} value={n}>Race to {n}</option>)}</select></label>
-      <div className="settingNote"><b>Each time you start it:</b> PottersMate creates a brand-new competition with these settings. No players, check-ins, matches or results are copied from the previous week.</div>
+      <label className="checkLine"><input type="checkbox" checked={f.season_enabled} onChange={e=>setF({...f,season_enabled:e.target.checked})}/> Run this as a season</label>
+      {f.season_enabled&&<label>Season length<input type="number" min="1" max="52" value={f.season_length_weeks} onChange={e=>setF({...f,season_length_weeks:Math.max(1,Math.min(52,Number(e.target.value)||1))})}/><small>Choose how many season sessions count toward this season.</small></label>}
+      <div className="settingNote"><b>Each session:</b> players, check-ins, draws and results are new. Casual sessions remain in history but do not count toward season standings.</div>
       <div className="ma"><button type="button" onClick={close}>Cancel</button><button className="primary">{t?'Save recurring tournament':'Create recurring tournament'}</button></div>
     </form>
   </Modal>
@@ -921,6 +1007,25 @@ const css=`*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;ba
 @media(max-width:650px){.previewMatches{grid-template-columns:1fr}.previewHeader{flex-direction:column}.previewRule{white-space:normal}}
 
 .drawPreviewNote{margin-top:8px;border:1px solid #e4e7ec;border-radius:8px;padding:8px 10px;background:#f8fafc;color:#667085;font-size:12px}.drawPreviewNote strong{color:#344054}
+
+.sessionTypeControl{margin-top:10px;padding:11px 12px;border:1px solid #dfe4ec;border-radius:10px;background:#fafbfc}
+.sessionTypeControl label{display:block;font-weight:800;font-size:13px;margin-bottom:5px}
+.sessionTypeControl select{width:100%;max-width:430px}
+.sessionTypeControl small{display:block;color:#667085;font-size:11px;margin-top:5px;line-height:1.4}
+
+
+.seasonLengthControl{margin-top:10px;padding:11px 12px;border:1px solid #dfe4ec;border-radius:10px;background:#fafbfc}
+.seasonLengthControl label{display:block;font-weight:800;font-size:13px;margin-bottom:5px}
+.seasonLengthRow{display:flex;align-items:center;gap:8px}.seasonLengthRow input{width:90px}.seasonLengthRow span{font-size:13px;color:#667085}
+.seasonLengthControl small{display:block;color:#667085;font-size:11px;margin-top:5px;line-height:1.4}
+
+
+.seasonMeta{display:block!important;font-weight:700;margin-top:4px;color:#475467!important}
+.sessionBanner{display:inline-flex;flex-wrap:wrap;gap:8px;margin-top:9px;padding:7px 10px;border-radius:9px;background:#f8f9fc;border:1px solid #e1e5ec;font-size:12px}
+.sessionBanner span{color:#667085}.checkLine{display:flex!important;flex-direction:row!important;align-items:center;gap:7px}.checkLine input{width:auto!important}
+.seasonPanelIntro{padding:10px 12px;border:1px solid #e3e7ee;border-radius:10px;background:#fafbfc}.seasonPanelIntro strong{display:block}.seasonPanelIntro span{display:block;color:#667085;font-size:12px;margin-top:3px}
+.seasonSessionList{margin-top:10px;border:1px solid #e3e7ee;border-radius:10px;overflow:hidden}.seasonSession{display:grid;grid-template-columns:90px 1fr auto;gap:10px;align-items:center;padding:9px 11px;border-top:1px solid #edf0f4}.seasonSession:first-child{border-top:0}.seasonSession span{color:#667085;font-size:12px}.seasonSession em{font-style:normal;font-size:11px;color:#667085}.seasonSession.current{background:#f8f9fc}.casualNote{margin-top:10px;padding:9px 11px;border-left:3px solid #b54708;background:#fffaf0;font-size:12px}
+
 .bracket{display:flex;gap:18px;overflow-x:auto;padding:8px 2px 14px}
 .bracketRound{min-width:220px;flex:1}.bracketRound h4{text-align:center;margin:4px 0 12px;font-size:16px}
 .bracketMatches{display:flex;flex-direction:column;justify-content:space-around;gap:16px;height:100%}

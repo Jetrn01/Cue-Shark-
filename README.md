@@ -135,3 +135,45 @@ Reverse Crossover is now designed as a flexible format rather than a 4x4-only co
 - Reverse pairing is highest finish vs lowest finish, then next-highest vs next-lowest.
 - Crossover is padded to a power of two and legitimate byes cascade through later rounds.
 - Existing scoring, automatic progression, accessibility priority and recurring tournament features are preserved.
+
+
+## V10.5 Season vs Casual Sessions
+Recurring competitions can now distinguish between:
+- Season / Points session: results count toward the recurring season score.
+- Casual night: results are saved for match history but excluded from season wins, losses and points.
+
+This keeps casual nights visible without allowing them to change the 8-week session standings.
+
+Database migration:
+- `v10.5-season-casual-sessions.sql`
+
+The migration adds `competitions.session_type` with values `season` or `casual`.
+
+
+## V10.6 Editable Season Length
+Recurring season templates can specify their season length in weeks.
+- Default: 8 weeks
+- Allowed: 1–52 weeks
+- Casual sessions remain separate and excluded from season scoring.
+- Existing tournament results are not deleted or changed.
+
+Database migration:
+- `v10.6-editable-season-length.sql`
+
+
+## V10.7 Draw Fix
+- Fixed the Reverse Crossover Generate Draw button: the group-stage generator is now correctly passed into the Draw Builder modal.
+- Fixed Reverse Crossover group pairing to follow the requested club format: A vs B, C vs D, E vs F, etc.
+- Within each paired group, finishing positions reverse: 1st vs last, 2nd vs second-last, etc.
+- Existing scoring, automatic progression, accessibility priority, recurring tournaments, casual sessions and editable season length are retained.
+
+
+## V11.0 Season Management
+- Recurring templates can be configured as seasons with an editable 1–52 week length.
+- Starting a season session automatically assigns Week 1, Week 2, etc.
+- Starting beyond the configured season length is blocked.
+- Casual nights can be started separately and are excluded from season standings.
+- A New Season action creates a fresh season ID and restarts at Week 1.
+- The current competition shows whether it is a season or casual session.
+- The selected competition shows the season's completed/current session history.
+- Migration: `v11.0-season-management.sql`.
