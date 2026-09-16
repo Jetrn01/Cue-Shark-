@@ -284,6 +284,54 @@ export default function Home() {
     setMsg(`Knockout draw created for ${checkedPlayers.length} players.`);
   }
 
+  function matchStatusLabel(m){
+    if(m.status==='completed') return 'Completed';
+    if(m.status==='scheduled') return 'Ready to play';
+    if(m.status==='in_progress' || m.status==='active') return 'Playing';
+    if(m.status==='bye') return 'Bye';
+    return 'Waiting';
+  }
+
+  function roundName(round,totalRounds){
+    if(round===totalRounds) return 'Final';
+    if(round===totalRounds-1) return 'Semi-Finals';
+    if(round===totalRounds-2) return 'Quarter-Finals';
+    return `Round ${round}`;
+  }
+
+  function KnockoutBracket({matches,playerName}){
+    const maxRound=Math.max(...matches.map(m=>Number(m.round_number)||1));
+    const rounds=[];
+    for(let r=1;r<=maxRound;r++) rounds.push(matches.filter(m=>Number(m.round_number)===r).sort((a,b)=>a.match_number-b.match_number));
+    return <div className="bracket">
+      {rounds.map((round,i)=><div className="bracketRound" key={i}>
+        <h4>{roundName(i+1,maxRound)}</h4>
+        <div className="bracketMatches">
+          {round.map(m=><div className={`bracketMatch ${m.status==='completed'?'done':''}`} key={m.id}>
+            <div className="bracketMatchNo">Match {m.match_number}</div>
+            <div className={m.winner_id===m.player1_id?'winnerLine':''}>{playerName(m.player1_id)} <b>{m.status==='completed'?m.score1:''}</b></div>
+            <div className={m.winner_id===m.player2_id?'winnerLine':''}>{playerName(m.player2_id)} <b>{m.status==='completed'?m.score2:''}</b></div>
+            <small>{matchStatusLabel(m)}{m.status==='completed' && m.winner_id ? ` · ${playerName(m.winner_id)} advances` : ''}</small>
+          </div>)}
+        </div>
+      </div>)}
+    </div>
+  }
+
+  function TournamentControl({tables,matches,playerName}){
+    return <div className="controlGrid">
+      {tables.length===0 ? <p className="muted">Add tables to see tournament control.</p> :
+        tables.map(t=>{
+          const active=matches.find(m=>m.table_id===t.id && m.status!=='completed');
+          return <div className="controlCard" key={t.id}>
+            <div className="controlTop"><strong>Table {t.table_number}</strong><span className={`statusPill ${t.status||'available'}`}>{active ? matchStatusLabel(active) : (t.status||'available')}</span></div>
+            {active ? <><div className="controlMatch">Match {active.match_number}</div><div>{playerName(active.player1_id)} <b>vs</b> {playerName(active.player2_id)}</div><small>Race to {active.race_to}</small></> : <div className="controlEmpty">No match assigned</div>}
+          </div>
+        })
+      }
+    </div>
+  }
+
 
   if(!session)return <><style>{css}</style><main className="auth"><div className="card"><h1>🎱 PottersMate</h1><p>Competition management for cue-sport clubs.</p><form onSubmit={auth}><input type="email" placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)} required/><input type="password" placeholder="Password" value={password} onChange={e=>setPassword(e.target.value)} required/><button className="primary">{mode==='login'?'Log in':'Create organiser account'}</button></form>{authMsg&&<p className="error">{authMsg}</p>}<button className="link" onClick={()=>setMode(mode==='login'?'signup':'login')}>{mode==='login'?'Need an organiser account?':'Already have an account? Log in'}</button></div></main></>;
 
@@ -317,6 +365,13 @@ export default function Home() {
       <select value={m.table_id||''} onChange={e=>assign(m,e.target.value)} disabled={m.status==='completed'}><option value="">Unassigned</option>{tables.filter(t=>t.status!=='unavailable').map(t=><option key={t.id} value={t.id}>Table {t.table_number}{t.is_accessible?' ♿':''}</option>)}</select>
     </div>)}
   </Panel>
+  {matches.length>0 && <Panel title="Tournament Control">
+    <TournamentControl tables={tables} matches={matches} playerName={playerName}/>
+  </Panel>}
+  {matches.length>0 && (selected.format||'').toLowerCase()==='knockout' && <Panel title="Knockout Bracket">
+    <p className="muted">Winners advance automatically when their match is completed.</p>
+    <KnockoutBracket matches={matches} playerName={playerName}/>
+  </Panel>}
   </section>}</div>
   {qrData&&<QRModal data={qrData} close={()=>setQrData(null)}/>}
   {modal?.type==='playerdb'&&<PlayerDatabaseModal players={playerDB} currentPlayers={players} close={()=>setModal(null)} add={addExistingPlayerToCompetition} edit={(p)=>setModal({type:'masterPlayer',p})} deletePlayer={deleteMasterPlayer} newPlayer={()=>setModal({type:'masterPlayer',p:null})}/>}
@@ -433,4 +488,20 @@ function CompetitionModal({c,close,save}){
 
 function TableModal({t,close,save}){const[f,setF]=useState({table_number:t?.table_number||'',table_type:t?.table_type||'Standard',notes:t?.notes||'',is_accessible:!!t?.is_accessible,status:t?.status||'available'});return <Modal title={t?'Edit table':'Add table'} close={close}><form onSubmit={e=>{e.preventDefault();save(f,t)}}><label>Table number<input required type="number" min="1" value={f.table_number} onChange={e=>setF({...f,table_number:e.target.value})}/></label><label>Table type<select value={f.table_type} onChange={e=>setF({...f,table_type:e.target.value})}><option>Standard</option><option>Accessible</option><option>Reserved / Unavailable</option></select></label><label className="check"><input type="checkbox" checked={f.is_accessible} onChange={e=>setF({...f,is_accessible:e.target.checked})}/> Accessible table ♿</label><label>Table notes<textarea value={f.notes} onChange={e=>setF({...f,notes:e.target.value})}/></label><div className="ma"><button type="button" onClick={close}>Cancel</button><button className="primary">Save</button></div></form></Modal>}
 
-const css=`*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:#f5f7fa;color:#172033}button,input,select,textarea{font:inherit}button{cursor:pointer;border:1px solid #d8dee8;background:#fff;border-radius:8px;padding:9px 12px}.primary{background:#172033;color:#fff;border-color:#172033}.danger{color:#b42318}.link{border:0;background:none;color:#315fdb}.auth{min-height:100vh;display:grid;place-items:center}.card{background:#fff;padding:36px;border-radius:18px;box-shadow:0 12px 40px #0001;width:min(430px,92vw)}.card form{display:grid;gap:12px}.card input{padding:12px;border:1px solid #ccd3df;border-radius:8px}.error{color:#b42318}header{background:#fff;border-bottom:1px solid #e4e8ef;padding:15px 24px;display:flex;justify-content:space-between;align-items:center}header h1{margin:0;font-size:25px}.layout{display:grid;grid-template-columns:260px 1fr;max-width:1400px;margin:auto;min-height:calc(100vh - 72px)}aside{background:#fff;border-right:1px solid #e4e8ef;padding:15px}.asideTitle{display:flex;flex-direction:column;gap:10px;margin-bottom:10px}.createBtn{width:100%;font-weight:700}aside button{display:block;width:100%;text-align:left;border:0;margin-top:6px}aside small{display:block;color:#758096;margin-top:4px}.sel{background:#eef2ff}.content{padding:22px;max-width:1100px}.hero{background:#fff;border:1px solid #e3e7ee;border-radius:14px;padding:20px;display:flex;justify-content:space-between;margin-bottom:18px}.hero h2{margin:0 0 6px}.hero p{margin:0;color:#6a7587}.heroRight{display:flex;flex-direction:column;align-items:flex-end;gap:12px}.settingsSummary{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px;color:#667085;font-size:13px}.settingsSummary span{background:#f5f7fa;padding:7px 9px;border-radius:7px}.dbTop{display:flex;gap:8px;margin-bottom:10px}.dbTop input{flex:1}.dbList{max-height:55vh;overflow:auto}.settingNote{background:#f5f7fa;border:1px solid #e3e7ee;border-radius:8px;padding:10px;color:#667085;font-size:13px;line-height:1.4}.stats{display:flex;gap:15px;align-items:center;flex-wrap:wrap}.stats b{background:#f5f7fa;padding:10px 12px;border-radius:8px}.panel{background:#fff;border:1px solid #e3e7ee;border-radius:14px;margin-bottom:18px;padding:16px}.ph{display:flex;justify-content:space-between;align-items:center}.ph h3{margin:0}.row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid #edf0f4}.row small{display:block;color:#707b8d;margin-top:4px}.actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap}.qr{border:1px dashed #aab3c2;border-radius:6px;padding:8px;text-align:center;font-size:11px}.qrLarge{display:flex;justify-content:center;align-items:center;padding:8px}.qrLarge img{width:320px;height:320px;max-width:100%;image-rendering:auto}.scoreLink{padding:9px 12px;border:1px solid #d8dee8;border-radius:8px;text-decoration:none;color:#172033;background:#fff}.muted{color:#778194}.drawTools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}.empty{padding:70px 30px}.notice{margin:14px auto;padding:10px 14px;background:#fff4e5;border:1px solid #ffd7a3;width:94%;border-radius:8px}.notice button{float:right;padding:2px 7px}.backdrop{position:fixed;inset:0;background:#0006;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:18px}.modal{background:#fff;width:min(520px,95vw);max-height:calc(100vh - 36px);overflow-y:auto;border-radius:14px;padding:18px;margin:auto 0}.mh{display:flex;justify-content:space-between;align-items:center}.modal form{display:grid;gap:12px}.modal label{display:grid;gap:5px;font-weight:600}.modal input,.modal select,.modal textarea{padding:10px;border:1px solid #ccd3df;border-radius:8px}.modal textarea{min-height:80px}.check{display:flex!important;align-items:center;gap:8px}.ma{display:flex;justify-content:flex-end;gap:8px}@media(max-width:850px){.heroRight{align-items:flex-start;margin-top:15px}.layout{grid-template-columns:1fr}aside{border-right:0;border-bottom:1px solid #e4e8ef}.hero{display:block}.row{flex-direction:column;align-items:flex-start}.actions{width:100%}}`;
+const css=`*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:#f5f7fa;color:#172033}button,input,select,textarea{font:inherit}button{cursor:pointer;border:1px solid #d8dee8;background:#fff;border-radius:8px;padding:9px 12px}.primary{background:#172033;color:#fff;border-color:#172033}.danger{color:#b42318}.link{border:0;background:none;color:#315fdb}.auth{min-height:100vh;display:grid;place-items:center}.card{background:#fff;padding:36px;border-radius:18px;box-shadow:0 12px 40px #0001;width:min(430px,92vw)}.card form{display:grid;gap:12px}.card input{padding:12px;border:1px solid #ccd3df;border-radius:8px}.error{color:#b42318}header{background:#fff;border-bottom:1px solid #e4e8ef;padding:15px 24px;display:flex;justify-content:space-between;align-items:center}header h1{margin:0;font-size:25px}.layout{display:grid;grid-template-columns:260px 1fr;max-width:1400px;margin:auto;min-height:calc(100vh - 72px)}aside{background:#fff;border-right:1px solid #e4e8ef;padding:15px}.asideTitle{display:flex;flex-direction:column;gap:10px;margin-bottom:10px}.createBtn{width:100%;font-weight:700}aside button{display:block;width:100%;text-align:left;border:0;margin-top:6px}aside small{display:block;color:#758096;margin-top:4px}.sel{background:#eef2ff}.content{padding:22px;max-width:1100px}.hero{background:#fff;border:1px solid #e3e7ee;border-radius:14px;padding:20px;display:flex;justify-content:space-between;margin-bottom:18px}.hero h2{margin:0 0 6px}.hero p{margin:0;color:#6a7587}.heroRight{display:flex;flex-direction:column;align-items:flex-end;gap:12px}.settingsSummary{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px;color:#667085;font-size:13px}.settingsSummary span{background:#f5f7fa;padding:7px 9px;border-radius:7px}.dbTop{display:flex;gap:8px;margin-bottom:10px}.dbTop input{flex:1}.dbList{max-height:55vh;overflow:auto}.settingNote{background:#f5f7fa;border:1px solid #e3e7ee;border-radius:8px;padding:10px;color:#667085;font-size:13px;line-height:1.4}.stats{display:flex;gap:15px;align-items:center;flex-wrap:wrap}.stats b{background:#f5f7fa;padding:10px 12px;border-radius:8px}.panel{background:#fff;border:1px solid #e3e7ee;border-radius:14px;margin-bottom:18px;padding:16px}.ph{display:flex;justify-content:space-between;align-items:center}.ph h3{margin:0}.row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid #edf0f4}.row small{display:block;color:#707b8d;margin-top:4px}.actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap}.qr{border:1px dashed #aab3c2;border-radius:6px;padding:8px;text-align:center;font-size:11px}.qrLarge{display:flex;justify-content:center;align-items:center;padding:8px}.qrLarge img{width:320px;height:320px;max-width:100%;image-rendering:auto}.scoreLink{padding:9px 12px;border:1px solid #d8dee8;border-radius:8px;text-decoration:none;color:#172033;background:#fff}.muted{color:#778194}.drawTools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}.empty{padding:70px 30px}.notice{margin:14px auto;padding:10px 14px;background:#fff4e5;border:1px solid #ffd7a3;width:94%;border-radius:8px}.notice button{float:right;padding:2px 7px}.backdrop{position:fixed;inset:0;background:#0006;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:18px}.modal{background:#fff;width:min(520px,95vw);max-height:calc(100vh - 36px);overflow-y:auto;border-radius:14px;padding:18px;margin:auto 0}.mh{display:flex;justify-content:space-between;align-items:center}.modal form{display:grid;gap:12px}.modal label{display:grid;gap:5px;font-weight:600}.modal input,.modal select,.modal textarea{padding:10px;border:1px solid #ccd3df;border-radius:8px}.modal textarea{min-height:80px}.check{display:flex!important;align-items:center;gap:8px}.ma{display:flex;justify-content:flex-end;gap:8px}@media(max-width:850px){.heroRight{align-items:flex-start;margin-top:15px}.layout{grid-template-columns:1fr}aside{border-right:0;border-bottom:1px solid #e4e8ef}.hero{display:block}.row{flex-direction:column;align-items:flex-start}.actions{width:100%}}
+.controlGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.controlCard{border:1px solid #dfe4ec;border-radius:14px;padding:16px;background:#fafbfc}
+.controlTop{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.controlMatch{font-size:18px;font-weight:800;margin-bottom:4px}
+.controlEmpty{color:#667085;padding:10px 0}
+.statusPill{font-size:12px;font-weight:800;text-transform:uppercase;border:1px solid #d0d5dd;border-radius:999px;padding:5px 8px}
+.statusPill.available{background:#fff}.statusPill.occupied{background:#f5f5f5}.statusPill.unavailable{background:#eee}
+.bracket{display:flex;gap:18px;overflow-x:auto;padding:8px 2px 14px}
+.bracketRound{min-width:220px;flex:1}.bracketRound h4{text-align:center;margin:4px 0 12px;font-size:16px}
+.bracketMatches{display:flex;flex-direction:column;justify-content:space-around;gap:16px;height:100%}
+.bracketMatch{border:1px solid #dfe4ec;border-radius:12px;background:#fff;padding:10px 12px;box-shadow:0 2px 8px #00000008}
+.bracketMatch.done{border-color:#b7c9b7}.bracketMatchNo{font-size:11px;color:#667085;margin-bottom:7px}
+.bracketMatch>div:not(.bracketMatchNo){display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-bottom:1px solid #eef0f3}
+.bracketMatch>div:last-of-type{border-bottom:0}.winnerLine{font-weight:800}.bracketMatch small{display:block;color:#667085;margin-top:7px}
+@media(max-width:700px){.bracket{gap:12px}.bracketRound{min-width:200px}}
+`;

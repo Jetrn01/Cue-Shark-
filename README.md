@@ -47,3 +47,7 @@ Displays completed match results in the organiser match list, including score, w
 
 ## V8.6
 Fixes organiser match-list display so completed results show score, winner, and Race-to-1 balls remaining.
+
+
+## V9.0
+Adds a visual knockout bracket and a tournament control panel. The existing public scoring RPC advances a completed knockout winner into the linked next match/slot; V9.0 makes that progression visible to the organiser.
