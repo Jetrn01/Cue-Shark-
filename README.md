@@ -7,3 +7,15 @@ No additional SQL is required if the V6 QR SQL/functions have already been insta
 
 ## V7.1
 Forms and modals are independently scrollable so all player and competition fields remain accessible on smaller screens.
+
+
+## V7.2
+Fixes the PostgreSQL `column reference "status" is ambiguous` error in automatic knockout winner progression by qualifying next-match status references.
+
+
+## V7.3
+Fixes the remaining `missing FROM-clause entry for table cm2` error in the second knockout progression update.
+
+
+## V7.5
+For Race to 1 matches, the QR scorer asks how many balls the winner had remaining (0–7) before completing the match. Longer races keep the existing frame-only scoring screen.

@@ -16,6 +16,7 @@ export default function ScorePage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [pendingWinner, setPendingWinner] = useState(null);
 
   useEffect(() => {
     if (token) load(token);
@@ -53,7 +54,7 @@ export default function ScorePage() {
     setLoading(false);
   }
 
-  async function awardFrame(player) {
+  async function submitScore(player, winnerBalls = null) {
     if (!data?.match_id || data.status === 'completed' || busy) return;
 
     setBusy(true);
@@ -64,7 +65,12 @@ export default function ScorePage() {
 
     const { data: rawUpdated, error: rpcError } = await supabase.rpc(
       'submit_public_score',
-      { p_token: String(token), p_score1: nextScore1, p_score2: nextScore2 }
+      {
+        p_token: String(token),
+        p_score1: nextScore1,
+        p_score2: nextScore2,
+        p_winner_balls: winnerBalls
+      }
     );
 
     if (rpcError) {
@@ -78,6 +84,7 @@ export default function ScorePage() {
 
       if (updated?.match_id) {
         setData(updated);
+        setPendingWinner(null);
       } else {
         setError('The score was not returned. Please refresh.');
       }
@@ -85,6 +92,19 @@ export default function ScorePage() {
 
     setBusy(false);
   }
+
+  async function awardFrame(player) {
+    if (!data?.match_id || data.status === 'completed' || busy) return;
+
+    if (raceTo === 1) {
+      setError('');
+      setPendingWinner(player);
+      return;
+    }
+
+    await submitScore(player, null);
+  }
+
 
   const player1 = data?.player1_name || 'Player 1';
   const player2 = data?.player2_name || 'Player 2';
@@ -137,6 +157,21 @@ export default function ScorePage() {
         <section className="card scoreCard">
           <div className="raceLabel">RACE TO <strong>{raceTo}</strong></div>
 
+          {raceTo === 1 && pendingWinner ? (
+            <div className="ballCountPanel">
+              <h2>{pendingWinner === 1 ? player1 : player2} won the frame</h2>
+              <p>How many balls did the winner have remaining?</p>
+              <div className="ballChoices">
+                {[0,1,2,3,4,5,6,7].map(n => (
+                  <button key={n} className="ballChoice" disabled={busy} onClick={() => submitScore(pendingWinner, n)}>
+                    {n}
+                  </button>
+                ))}
+              </div>
+              <button className="secondary" onClick={() => setPendingWinner(null)} disabled={busy}>← Back</button>
+            </div>
+          ) : null}
+
           <div className="players">
             <div className="playerBox">
               <div className="playerName">{player1}</div>
@@ -173,7 +208,7 @@ export default function ScorePage() {
             <div className="winner">
               <div className="trophy">🏆</div>
               <div>MATCH COMPLETE</div>
-              <strong>{winner} wins {score1}–{score2}</strong>
+              <strong>{winner} wins {score1}–{score2}{raceTo === 1 && data?.winner_balls !== null && data?.winner_balls !== undefined ? ` · ${data.winner_balls} balls remaining` : ""}</strong>
             </div>
           ) : (
             <p className="hint">After each frame, tap the button for the player who won it.</p>
@@ -201,6 +236,7 @@ body{margin:0;font-family:Arial,Helvetica,sans-serif;background:#f5f7fa;color:#1
 .scoreCard{padding:26px}
 .raceLabel{text-align:center;font-size:20px;letter-spacing:1px;margin-bottom:22px}
 .raceLabel strong{font-size:26px}
+.ballCountPanel{border:1px solid #dfe4ec;border-radius:16px;padding:22px;text-align:center;margin-bottom:20px;background:#fafbfc}.ballCountPanel h2{margin:0 0 8px;font-size:24px}.ballCountPanel p{margin:0 0 18px;color:#667085;font-size:16px}.ballChoices{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px}.ballChoice{min-height:62px;font-size:25px;font-weight:800;border:1px solid #aab3c2;background:#fff;border-radius:12px;cursor:pointer}.ballChoice:disabled{opacity:.55;cursor:not-allowed}
 .players{display:grid;grid-template-columns:1fr 1fr;gap:18px}
 .playerBox{border:1px solid #dfe4ec;border-radius:16px;padding:22px;text-align:center}
 .playerName{font-size:25px;font-weight:800;min-height:58px;display:flex;align-items:center;justify-content:center}
