@@ -263,14 +263,38 @@ export default function Home() {
     }
     for(let r=0;r<byRound.length-1;r++){
       for(let k=0;k<byRound[r].length;k++){
+        const feeder=byRound[r][k];
         const target=byRound[r+1][Math.floor(k/2)];
-        byRound[r][k].next_match_id=target.id; byRound[r][k].next_slot=(k%2)+1;
-        if(byRound[r][k].status==='bye' && byRound[r][k].winner_id){
-          if(byRound[r][k].next_slot===1) target.player1_id=byRound[r][k].winner_id;
-          else target.player2_id=byRound[r][k].winner_id;
+        feeder.next_match_id=target.id; feeder.next_slot=(k%2)+1;
+        if(feeder.status==='bye' && feeder.winner_id){
+          if(feeder.next_slot===1) target.player1_id=feeder.winner_id;
+          else target.player2_id=feeder.winner_id;
         }
       }
-      for(const m of byRound[r+1]) if(m.player1_id&&m.player2_id)m.status='scheduled';
+
+      for(const target of byRound[r+1]){
+        if(target.player1_id && target.player2_id){
+          target.status='scheduled';
+          continue;
+        }
+
+        const sole=target.player1_id || target.player2_id;
+        if(!sole) continue;
+
+        const missingSlot=target.player1_id ? 2 : 1;
+        const paddingFeeder=byRound[r].find(
+          feeder=>feeder.next_match_id===target.id &&
+                   feeder.next_slot===missingSlot &&
+                   feeder.status==='waiting' &&
+                   !feeder.player1_id &&
+                   !feeder.player2_id
+        );
+
+        if(paddingFeeder){
+          target.status='bye';
+          target.winner_id=sole;
+        }
+      }
     }
     const final=byRound.at(-1)[0];
     if(final.player1_id&&final.player2_id) final.status='scheduled';
@@ -457,6 +481,7 @@ export default function Home() {
       <div><b>Match {m.match_number} · Round {m.round_number}</b><small>
         {playerName(m.player1_id)} vs {playerName(m.player2_id)} · Race to {m.race_to} · {m.status}
         {m.status==='completed' && <> · <strong>Result: {m.score1 ?? 0} – {m.score2 ?? 0}</strong>{m.winner_id ? <> · Winner: {playerName(m.winner_id)}</> : null}{Number(m.race_to)===1 && m.winner_balls !== null && m.winner_balls !== undefined ? <> · {m.winner_balls} balls remaining</> : null}</>}
+        {m.status==='bye' && m.winner_id && <> · <strong>Bye: {playerName(m.winner_id)} advances</strong></>}
       </small></div>
       <select value={m.table_id||''} onChange={e=>assign(m,e.target.value)} disabled={m.status==='completed'}><option value="">Unassigned</option>{tables.filter(t=>{if(t.status==='unavailable')return false;const needs=[m.player1_id,m.player2_id].some(pid=>players.find(x=>x.player_id===pid)?.players?.requires_accessible_table);return !needs || t.is_accessible;}).map(t=><option key={t.id} value={t.id}>Table {t.table_number}{t.is_accessible?' ♿':''}</option>)}</select>
     </div>)}

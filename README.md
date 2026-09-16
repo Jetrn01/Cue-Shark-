@@ -65,3 +65,16 @@ Adds a player-directory setting for Requires accessible table. Matches containin
 - Accessibility-required matches can only be assigned to accessible available tables.
 - Standard matches prefer standard available tables.
 - A standard match may use a remaining accessible table only after accessibility-required ready matches have been considered.
+
+
+## V9.4
+Automatic knockout progression is now more complete:
+- winners move into the correct slot in the next round;
+- the next match becomes Ready to play when both players are present;
+- bracket-padding byes cascade through later rounds;
+- bye advancement is shown in the organiser match list;
+- completed tables are released back to Available;
+- accessibility-priority assignment remains in place.
+
+Run `v9.4-automatic-progression.sql` once in Supabase SQL Editor.
+No new tables are required.
