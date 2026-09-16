@@ -19,6 +19,7 @@ export default function Home() {
   const [session,setSession]=useState(null), [mode,setMode]=useState('login');
   const [email,setEmail]=useState(''),[password,setPassword]=useState(''),[authMsg,setAuthMsg]=useState('');
   const [competitions,setCompetitions]=useState([]),[selected,setSelected]=useState(null);
+  const [templates,setTemplates]=useState([]);
   const [players,setPlayers]=useState([]),[tables,setTables]=useState([]),[matches,setMatches]=useState([]);
   const [modal,setModal]=useState(null),[msg,setMsg]=useState('');
   const [drawSettings,setDrawSettings]=useState({type:'Knockout',race_to:3});
@@ -29,6 +30,7 @@ export default function Home() {
     const {data:s}=supabase.auth.onAuthStateChange((_e,x)=>setSession(x)); return()=>s.subscription.unsubscribe()},[]);
   useEffect(()=>{if(session) loadCompetitions()},[session]);
   useEffect(()=>{if(session) loadPlayerDB()},[session]);
+  useEffect(()=>{if(session) loadTemplates()},[session]);
 
   useEffect(()=>{
     if(!session || !selected) return;
@@ -39,6 +41,7 @@ export default function Home() {
   async function loadPlayerDB(){const {data,error}=await supabase.from('players').select('id,first_name,last_name,display_name,phone,email,club_name,requires_accessible_table').order('display_name',{ascending:true});if(error)setMsg(error.message);else setPlayerDB(data||[])}
 
   async function loadCompetitions(){const {data,error}=await supabase.from('competitions').select('*').order('start_date',{ascending:true}); if(error)setMsg(error.message);else setCompetitions(data||[])}
+  async function loadTemplates(){const {data,error}=await supabase.from('competition_templates').select('*').eq('is_active',true).order('name'); if(error)setMsg(error.message);else setTemplates(data||[])}
   async function load(c){setSelected(c);
     const [p,m,t]=await Promise.all([
       supabase.from('competition_players').select('id,player_id,checked_in,players(id,first_name,last_name,display_name,phone,email,club_name,requires_accessible_table)').eq('competition_id',c.id),
@@ -72,6 +75,45 @@ export default function Home() {
     setModal(null);
     const {data:updated}=await supabase.from('competitions').select('*').eq('id',selected.id).single();
     if(updated){setSelected(updated);setCompetitions(prev=>prev.map(c=>c.id===updated.id?updated:c));}
+  }
+
+  function nextRecurringDate(day){
+    const today=new Date();
+    const target=Number(day);
+    const diff=(target-today.getDay()+7)%7;
+    const d=new Date(today);
+    d.setDate(today.getDate()+diff);
+    const pad=n=>String(n).padStart(2,'0');
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+  }
+
+  async function saveTemplate(f,old){
+    const data={
+      name:f.name.trim(), venue:f.venue.trim(), day_of_week:Number(f.day_of_week),
+      format:f.format, rules:f.rules, default_race_to:Number(f.default_race_to),
+      status:f.status, is_active:true, organiser_id:session.user.id
+    };
+    const r=old
+      ? await supabase.from('competition_templates').update(data).eq('id',old.id)
+      : await supabase.from('competition_templates').insert(data);
+    if(r.error){setMsg(`Could not save recurring tournament: ${r.error.message}`);return;}
+    setModal(null); await loadTemplates(); setMsg(`Recurring tournament "${data.name}" saved.`);
+  }
+
+  async function startFromTemplate(t){
+    const startDate=nextRecurringDate(t.day_of_week);
+    const data={name:t.name,venue:t.venue,start_date:startDate,format:t.format,rules:t.rules,status:'active',default_race_to:t.default_race_to};
+    const {data:created,error}=await supabase.from('competitions').insert(data).select('*').single();
+    if(error){setMsg(`Could not start tournament: ${error.message}`);return;}
+    await loadCompetitions();
+    if(created) await load(created);
+    setMsg(`"${created.name}" started for ${created.start_date}. Add this week's players, check them in, then create the draw.`);
+  }
+
+  async function deactivateTemplate(t){
+    if(!window.confirm(`Hide recurring tournament "${t.name}"? Existing competitions will not be affected.`))return;
+    const {error}=await supabase.from('competition_templates').update({is_active:false}).eq('id',t.id);
+    if(error)setMsg(error.message);else{await loadTemplates();setMsg(`"${t.name}" was removed from recurring tournaments.`)}
   }
 
   async function deleteCompetition(){
@@ -535,7 +577,7 @@ export default function Home() {
   const checked=players.filter(p=>p.checked_in).length;
   return <><style>{css}</style><header><div><h1>🎱 PottersMate</h1><small>Organiser Dashboard</small></div><button onClick={()=>supabase.auth.signOut()}>Log out</button></header>
   {msg&&<div className="notice">{msg}<button onClick={()=>setMsg('')}>✕</button></div>}
-  <div className="layout"><aside><div className="asideTitle"><b>Competitions</b><button className="primary createBtn" onClick={()=>{setSelected(null);setModal({type:'competition',c:null})}}>＋ Create competition</button><button onClick={()=>setModal({type:'playerdb'})}>👥 Player database</button></div>{competitions.map(c=><button className={selected?.id===c.id?'sel':''} key={c.id} onClick={()=>load(c)}>{c.name}<small>{c.start_date||'Date TBC'} · {c.venue||''}</small></button>)}</aside>
+  <div className="layout"><aside><div className="asideTitle"><b>Competitions</b><button className="primary createBtn" onClick={()=>{setSelected(null);setModal({type:'competition',c:null})}}>＋ Create competition</button><button onClick={()=>setModal({type:'templates'})}>🔄 Recurring tournaments</button><button onClick={()=>setModal({type:'playerdb'})}>👥 Player database</button></div>{competitions.map(c=><button className={selected?.id===c.id?'sel':''} key={c.id} onClick={()=>load(c)}>{c.name}<small>{c.start_date||'Date TBC'} · {c.venue||''}</small></button>)}</aside>
   {!selected?<section className="empty"><h2>Select a competition</h2><p>Manage players, tables and match assignments.</p></section>:
   <section className="content"><div className="hero"><div><h2>{selected.name}</h2><p>{selected.venue} · {selected.start_date||'Date TBC'}</p><div className="settingsSummary"><span><b>Format:</b> {selected.format||'Not set'}</span><span><b>Rules:</b> {selected.rules||'Not set'}</span><span><b>Default race:</b> Race to {selected.default_race_to||3}</span></div></div><div className="heroRight"><button className="primary" onClick={()=>setModal({type:'competition',c:selected})}>⚙️ Edit competition</button><button className="danger" onClick={deleteCompetition}>🗑️ Delete competition</button><div className="stats"><b>{players.length} players</b><b>{checked} checked in</b><b>{tables.length} tables</b></div></div></div>
 
@@ -556,7 +598,7 @@ export default function Home() {
     </div>
     {matches.map(m=><div className="row" key={m.id}>
       <div><b>Match {m.match_number} · Round {m.round_number}</b><small>
-        {playerName(m.player1_id)} vs {playerName(m.player2_id)} · Race to {m.race_to} · {m.status}
+        {playerName(m.player1_id)} vs {playerName(m.player2_id)} · Race to {m.race_to} · {matchStatusLabel(m)}
         {m.status==='completed' && <> · <strong>Result: {m.score1 ?? 0} – {m.score2 ?? 0}</strong>{m.winner_id ? <> · Winner: {playerName(m.winner_id)}</> : null}{Number(m.race_to)===1 && m.winner_balls !== null && m.winner_balls !== undefined ? <> · {m.winner_balls} balls remaining</> : null}</>}
         {m.status==='bye' && m.winner_id && <> · <strong>Bye: {playerName(m.winner_id)} advances</strong></>}
       </small></div>
@@ -578,6 +620,8 @@ export default function Home() {
   {modal?.type==='player'&&<PlayerModal p={modal.p} close={()=>setModal(null)} save={savePlayer}/>}
   {modal?.type==='table'&&<TableModal t={modal.t} close={()=>setModal(null)} save={saveTable}/>}
   {modal?.type==='competition'&&<CompetitionModal c={modal.c} close={()=>setModal(null)} save={saveCompetition}/>}
+  {modal?.type==='templates'&&<RecurringModal templates={templates} close={()=>setModal(null)} newTemplate={()=>setModal({type:'template'})} edit={t=>setModal({type:'template',t})} start={startFromTemplate} deactivate={deactivateTemplate}/>}
+  {modal?.type==='template'&&<TemplateModal t={modal.t} close={()=>setModal(null)} save={saveTemplate}/>}
   </>;
 }
 
@@ -685,6 +729,34 @@ function CompetitionModal({c,close,save}){
   </Modal>
 }
 
+function dayName(n){return ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][Number(n)]}
+function RecurringModal({templates,close,newTemplate,edit,start,deactivate}){
+  return <Modal title="Recurring tournaments" close={close}>
+    <div className="templateIntro"><strong>Set up a tournament once, then start a fresh copy each week.</strong><span>Players, check-ins, draws and results are always new for each tournament.</span></div>
+    {templates.length===0&&<p className="muted">No recurring tournaments yet.</p>}
+    {templates.map(t=><div className="templateCard" key={t.id}>
+      <div><strong>{t.name}</strong><span>{dayName(t.day_of_week)} · {t.venue||'Venue TBC'}</span><small>{t.format} · {t.rules} · Race to {t.default_race_to}</small></div>
+      <div className="actions"><button className="primary" onClick={()=>start(t)}>▶ Start this week's tournament</button><button onClick={()=>edit(t)}>✏️ Edit</button><button className="danger" onClick={()=>deactivate(t)}>Remove</button></div>
+    </div>)}
+    <div className="ma"><button type="button" onClick={newTemplate} className="primary">＋ Create recurring tournament</button></div>
+  </Modal>
+}
+function TemplateModal({t,close,save}){
+  const[f,setF]=useState({name:t?.name||'',venue:t?.venue||'',day_of_week:t?.day_of_week??4,format:t?.format||'Knockout',rules:t?.rules||'CNZ Rules',default_race_to:t?.default_race_to||3,status:t?.status||'active'});
+  return <Modal title={t?'Edit recurring tournament':'Create recurring tournament'} close={close}>
+    <form onSubmit={e=>{e.preventDefault();save(f,t)}}>
+      <label>Tournament name<input required value={f.name} placeholder="Thursday Night 8-Ball" onChange={e=>setF({...f,name:e.target.value})}/></label>
+      <label>Venue<input value={f.venue} placeholder="Cambridge Cossie Club" onChange={e=>setF({...f,venue:e.target.value})}/></label>
+      <label>Repeats every<select value={f.day_of_week} onChange={e=>setF({...f,day_of_week:Number(e.target.value)})}>{['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'].map((d,i)=><option key={d} value={i}>{d}</option>)}</select></label>
+      <label>Format<select value={f.format} onChange={e=>setF({...f,format:e.target.value})}><option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Seeded Draw</option><option>Singles</option><option>Doubles</option><option>Teams</option><option>Custom</option></select></label>
+      <label>Rules<select value={f.rules} onChange={e=>setF({...f,rules:e.target.value})}><option>CNZ Rules</option><option>International Rules</option><option>Custom</option></select></label>
+      <label>Default race length<select value={f.default_race_to} onChange={e=>setF({...f,default_race_to:Number(e.target.value)})}>{[1,2,3,5,7,9].map(n=><option key={n} value={n}>Race to {n}</option>)}</select></label>
+      <div className="settingNote"><b>Each time you start it:</b> PottersMate creates a brand-new competition with these settings. No players, check-ins, matches or results are copied from the previous week.</div>
+      <div className="ma"><button type="button" onClick={close}>Cancel</button><button className="primary">{t?'Save recurring tournament':'Create recurring tournament'}</button></div>
+    </form>
+  </Modal>
+}
+
 function TableModal({t,close,save}){const[f,setF]=useState({table_number:t?.table_number||'',table_type:t?.table_type||'Standard',notes:t?.notes||'',is_accessible:!!t?.is_accessible,status:t?.status||'available'});return <Modal title={t?'Edit table':'Add table'} close={close}><form onSubmit={e=>{e.preventDefault();save(f,t)}}><label>Table number<input required type="number" min="1" value={f.table_number} onChange={e=>setF({...f,table_number:e.target.value})}/></label><label>Table type<select value={f.table_type} onChange={e=>setF({...f,table_type:e.target.value})}><option>Standard</option><option>Accessible</option><option>Reserved / Unavailable</option></select></label><label className="check"><input type="checkbox" checked={f.is_accessible} onChange={e=>setF({...f,is_accessible:e.target.checked})}/> Accessible table ♿</label><label>Table notes<textarea value={f.notes} onChange={e=>setF({...f,notes:e.target.value})}/></label><div className="ma"><button type="button" onClick={close}>Cancel</button><button className="primary">Save</button></div></form></Modal>}
 
 const css=`*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:#f5f7fa;color:#172033}button,input,select,textarea{font:inherit}button{cursor:pointer;border:1px solid #d8dee8;background:#fff;border-radius:8px;padding:9px 12px}.primary{background:#172033;color:#fff;border-color:#172033}.danger{color:#b42318}.link{border:0;background:none;color:#315fdb}.auth{min-height:100vh;display:grid;place-items:center}.card{background:#fff;padding:36px;border-radius:18px;box-shadow:0 12px 40px #0001;width:min(430px,92vw)}.card form{display:grid;gap:12px}.card input{padding:12px;border:1px solid #ccd3df;border-radius:8px}.error{color:#b42318}header{background:#fff;border-bottom:1px solid #e4e8ef;padding:15px 24px;display:flex;justify-content:space-between;align-items:center}header h1{margin:0;font-size:25px}.layout{display:grid;grid-template-columns:260px 1fr;max-width:1400px;margin:auto;min-height:calc(100vh - 72px)}aside{background:#fff;border-right:1px solid #e4e8ef;padding:15px}.asideTitle{display:flex;flex-direction:column;gap:10px;margin-bottom:10px}.createBtn{width:100%;font-weight:700}aside button{display:block;width:100%;text-align:left;border:0;margin-top:6px}aside small{display:block;color:#758096;margin-top:4px}.sel{background:#eef2ff}.content{padding:22px;max-width:1100px}.hero{background:#fff;border:1px solid #e3e7ee;border-radius:14px;padding:20px;display:flex;justify-content:space-between;margin-bottom:18px}.hero h2{margin:0 0 6px}.hero p{margin:0;color:#6a7587}.heroRight{display:flex;flex-direction:column;align-items:flex-end;gap:12px}.settingsSummary{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px;color:#667085;font-size:13px}.settingsSummary span{background:#f5f7fa;padding:7px 9px;border-radius:7px}.dbTop{display:flex;gap:8px;margin-bottom:10px}.dbTop input{flex:1}.dbList{max-height:55vh;overflow:auto}.settingNote{background:#f5f7fa;border:1px solid #e3e7ee;border-radius:8px;padding:10px;color:#667085;font-size:13px;line-height:1.4}.stats{display:flex;gap:15px;align-items:center;flex-wrap:wrap}.stats b{background:#f5f7fa;padding:10px 12px;border-radius:8px}.panel{background:#fff;border:1px solid #e3e7ee;border-radius:14px;margin-bottom:18px;padding:16px}.ph{display:flex;justify-content:space-between;align-items:center}.ph h3{margin:0}.row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid #edf0f4}.row small{display:block;color:#707b8d;margin-top:4px}.actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap}.qr{border:1px dashed #aab3c2;border-radius:6px;padding:8px;text-align:center;font-size:11px}.qrLarge{display:flex;justify-content:center;align-items:center;padding:8px}.qrLarge img{width:320px;height:320px;max-width:100%;image-rendering:auto}.scoreLink{padding:9px 12px;border:1px solid #d8dee8;border-radius:8px;text-decoration:none;color:#172033;background:#fff}.muted{color:#778194}.drawTools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}.empty{padding:70px 30px}.notice{margin:14px auto;padding:10px 14px;background:#fff4e5;border:1px solid #ffd7a3;width:94%;border-radius:8px}.notice button{float:right;padding:2px 7px}.backdrop{position:fixed;inset:0;background:#0006;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:18px}.modal{background:#fff;width:min(520px,95vw);max-height:calc(100vh - 36px);overflow-y:auto;border-radius:14px;padding:18px;margin:auto 0}.mh{display:flex;justify-content:space-between;align-items:center}.modal form{display:grid;gap:12px}.modal label{display:grid;gap:5px;font-weight:600}.modal input,.modal select,.modal textarea{padding:10px;border:1px solid #ccd3df;border-radius:8px}.modal textarea{min-height:80px}.check{display:flex!important;align-items:center;gap:8px}.ma{display:flex;justify-content:flex-end;gap:8px}@media(max-width:850px){.heroRight{align-items:flex-start;margin-top:15px}.layout{grid-template-columns:1fr}aside{border-right:0;border-bottom:1px solid #e4e8ef}.hero{display:block}.row{flex-direction:column;align-items:flex-start}.actions{width:100%}}
@@ -713,6 +785,7 @@ const css=`*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;ba
 .statusPill{font-size:12px;font-weight:800;text-transform:uppercase;border:1px solid #d0d5dd;border-radius:999px;padding:5px 8px}
 .statusPill.available{background:#fff}.statusPill.occupied{background:#f5f5f5}.statusPill.unavailable{background:#eee}
 .waitingPanel,.resultsPanel{margin-top:20px;border-top:1px solid #edf0f4;padding-top:15px}.waitingList,.resultsList{border:1px solid #e3e7ee;border-radius:12px;overflow:hidden}.waitingItem,.resultItem{display:flex;justify-content:space-between;gap:12px;padding:11px 13px;border-top:1px solid #edf0f4;background:#fff}.waitingItem:first-child,.resultItem:first-child{border-top:0}.waitingItem span,.resultItem span{color:#667085;font-size:13px}.resultItem>div{display:flex;flex-direction:column;gap:3px}.resultScore{text-align:right}.resultScore span{font-size:12px}
+.templateIntro{background:#f7f8fb;border:1px solid #e3e7ee;border-radius:10px;padding:12px;margin-bottom:12px}.templateIntro strong,.templateIntro span{display:block}.templateIntro span{color:#667085;font-size:13px;margin-top:4px}.templateCard{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:13px 0;border-top:1px solid #edf0f4}.templateCard>div:first-child strong,.templateCard>div:first-child span,.templateCard>div:first-child small{display:block}.templateCard span,.templateCard small{color:#667085;margin-top:4px}.templateCard small{font-size:12px}.templateCard .actions{justify-content:flex-end}@media(max-width:700px){.templateCard{flex-direction:column;align-items:flex-start}.templateCard .actions{width:100%;justify-content:flex-start}}
 .bracket{display:flex;gap:18px;overflow-x:auto;padding:8px 2px 14px}
 .bracketRound{min-width:220px;flex:1}.bracketRound h4{text-align:center;margin:4px 0 12px;font-size:16px}
 .bracketMatches{display:flex;flex-direction:column;justify-content:space-around;gap:16px;height:100%}

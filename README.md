@@ -93,3 +93,14 @@ Tournament Control is now the organiser's live command centre:
 - Latest-results section showing completed matches and winners
 - Existing Assign Next Ready logic and accessibility protection preserved
 - No new database tables required
+
+## V10.1 Recurring Tournament Templates
+Built from V10.0.
+
+- Added Recurring tournaments in the organiser sidebar.
+- Create a weekly template with day, venue, format, rules and default race length.
+- Start this week's tournament from the template.
+- Each start creates a completely fresh competition: no players, check-ins, matches or results are copied.
+- Edit or remove recurring templates.
+- Match list now displays scheduled matches as "Ready to play" rather than the internal status value.
+- SQL migration: `v10.1-recurring-tournaments.sql`
