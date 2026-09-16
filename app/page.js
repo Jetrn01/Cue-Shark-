@@ -94,7 +94,82 @@ export default function Home() {
     if(r.error)setMsg(r.error.message);else{setModal(null);load(selected)}
   }
   async function delTable(t){if(!confirm(`Delete Table ${t.table_number}?`))return;const r=await supabase.from('tournament_tables').delete().eq('id',t.id);if(r.error)setMsg(r.error.message);else load(selected)}
-  async function assign(m,id){const r=await supabase.from('competition_matches').update({table_id:id||null}).eq('id',m.id);if(r.error)setMsg(r.error.message);else load(selected)}
+  async function assign(m,id){
+    const previous=m.table_id;
+    if(previous===id)return;
+    if(previous)await supabase.from('tournament_tables').update({status:'available'}).eq('id',previous);
+    if(id)await supabase.from('tournament_tables').update({status:'occupied'}).eq('id',id);
+    const r=await supabase.from('competition_matches').update({table_id:id||null}).eq('id',m.id);
+    if(r.error)setMsg(r.error.message);else load(selected)
+  }
+  function playerName(id){
+    const p=players.find(x=>x.player_id===id)?.players;
+    return p?.display_name || `${p?.first_name||''} ${p?.last_name||''}`.trim() || 'TBC';
+  }
+
+  async function generateKnockout(){
+    if(!selected)return;
+    if((selected.format||'').toLowerCase()!=='knockout'){
+      setMsg('Set the competition format to Knockout before generating a knockout draw.');
+      return;
+    }
+    const checkedPlayers=players.filter(p=>p.checked_in).map(p=>p.player_id).filter(Boolean);
+    if(checkedPlayers.length<2){setMsg('Check in at least 2 players before generating the knockout draw.');return;}
+    if(matches.length){
+      if(matches.some(m=>['completed','in_progress','active'].includes(m.status))){
+        setMsg('This competition already has matches in progress or completed. A new draw cannot replace them.');return;
+      }
+      if(!window.confirm('Replace the existing knockout draw? This removes the current scheduled draw and creates a new one.'))return;
+      const {error}=await supabase.from('competition_matches').delete().eq('competition_id',selected.id);
+      if(error){setMsg(error.message);return;}
+    }
+
+    const size=2**Math.ceil(Math.log2(checkedPlayers.length));
+    const rounds=Math.log2(size);
+    const all=[]; const roundLists=[]; let matchNumber=1;
+    let first=[];
+    for(let i=0;i<size/2;i++){
+      const p1=checkedPlayers[i*2]||null;
+      const p2=checkedPlayers[i*2+1]||null;
+      const bye=!!p1!==!!p2;
+      const row={id:crypto.randomUUID(),competition_id:selected.id,match_number:matchNumber++,round_number:1,player1_id:p1,player2_id:p2,race_to:Number(selected.default_race_to||3),status:bye?'bye':'scheduled',score1:0,score2:0,next_match_id:null,next_slot:null,winner_id:bye?(p1||p2):null,loser_id:null,table_id:null};
+      first.push(row);all.push(row);
+    }
+    roundLists.push(first);
+    for(let r=2;r<=rounds;r++){
+      const prev=roundLists[r-2]; const current=[];
+      for(let i=0;i<prev.length/2;i++){
+        const row={id:crypto.randomUUID(),competition_id:selected.id,match_number:matchNumber++,round_number:r,player1_id:null,player2_id:null,race_to:Number(selected.default_race_to||3),status:'waiting',score1:0,score2:0,next_match_id:null,next_slot:null,winner_id:null,loser_id:null,table_id:null};
+        current.push(row);all.push(row);
+        prev[i*2].next_match_id=row.id;prev[i*2].next_slot=1;
+        prev[i*2+1].next_match_id=row.id;prev[i*2+1].next_slot=2;
+      }
+      roundLists.push(current);
+    }
+    // Propagate any first-round byes into their next-round slots.
+    for(let r=0;r<roundLists.length-1;r++){
+      for(const feeder of roundLists[r]){
+        if(feeder.status==='bye' && feeder.winner_id && feeder.next_match_id){
+          const target=all.find(x=>x.id===feeder.next_match_id);
+          if(target){
+            if(feeder.next_slot===1)target.player1_id=feeder.winner_id;
+            else target.player2_id=feeder.winner_id;
+          }
+        }
+      }
+      for(const m of roundLists[r+1]){
+        if(m.player1_id && m.player2_id)m.status='scheduled';
+      }
+    }
+    const finalMatch=roundLists[roundLists.length-1][0];
+    finalMatch.status=finalMatch.player1_id&&finalMatch.player2_id?'scheduled':'waiting';
+
+    const {error}=await supabase.from('competition_matches').insert(all);
+    if(error){setMsg(error.message);return;}
+    await load(selected);
+    setMsg(`Knockout draw created for ${checkedPlayers.length} players.`);
+  }
+
 
   if(!session)return <><style>{css}</style><main className="auth"><div className="card"><h1>🎱 PottersMate</h1><p>Competition management for cue-sport clubs.</p><form onSubmit={auth}><input type="email" placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)} required/><input type="password" placeholder="Password" value={password} onChange={e=>setPassword(e.target.value)} required/><button className="primary">{mode==='login'?'Log in':'Create organiser account'}</button></form>{authMsg&&<p className="error">{authMsg}</p>}<button className="link" onClick={()=>setMode(mode==='login'?'signup':'login')}>{mode==='login'?'Need an organiser account?':'Already have an account? Log in'}</button></div></main></>;
 
@@ -115,7 +190,14 @@ export default function Home() {
   </Panel>
 
   <Panel title="Matches & Table Assignment">
-    {matches.map(m=><div className="row" key={m.id}><div><b>Match {m.match_number}</b><small>Race to {m.race_to} · {m.status}</small></div><select value={m.table_id||''} onChange={e=>assign(m,e.target.value)}><option value="">Unassigned</option>{tables.filter(t=>t.status!=='unavailable').map(t=><option key={t.id} value={t.id}>Table {t.table_number}{t.is_accessible?' ♿':''}</option>)}</select></div>)}
+    <div className="drawTools">
+      {(selected.format||'').toLowerCase()==='knockout'&&<button className="primary" onClick={generateKnockout}>🎱 {matches.length?'Regenerate':'Generate'} Knockout Draw</button>}
+      {matches.length===0&&<p className="muted">No matches created yet.</p>}
+    </div>
+    {matches.map(m=><div className="row" key={m.id}>
+      <div><b>Match {m.match_number} · Round {m.round_number}</b><small>{playerName(m.player1_id)} vs {playerName(m.player2_id)} · Race to {m.race_to} · {m.status}{m.winner_id?' · Winner recorded':''}</small></div>
+      <select value={m.table_id||''} onChange={e=>assign(m,e.target.value)} disabled={m.status==='completed'}><option value="">Unassigned</option>{tables.filter(t=>t.status!=='unavailable').map(t=><option key={t.id} value={t.id}>Table {t.table_number}{t.is_accessible?' ♿':''}</option>)}</select>
+    </div>)}
   </Panel>
   </section>}</div>
   {qrData&&<QRModal data={qrData} close={()=>setQrData(null)}/>}
@@ -174,4 +256,4 @@ function CompetitionModal({c,close,save}){
 
 function TableModal({t,close,save}){const[f,setF]=useState({table_number:t?.table_number||'',table_type:t?.table_type||'Standard',notes:t?.notes||'',is_accessible:!!t?.is_accessible,status:t?.status||'available'});return <Modal title={t?'Edit table':'Add table'} close={close}><form onSubmit={e=>{e.preventDefault();save(f,t)}}><label>Table number<input required type="number" min="1" value={f.table_number} onChange={e=>setF({...f,table_number:e.target.value})}/></label><label>Table type<select value={f.table_type} onChange={e=>setF({...f,table_type:e.target.value})}><option>Standard</option><option>Accessible</option><option>Reserved / Unavailable</option></select></label><label className="check"><input type="checkbox" checked={f.is_accessible} onChange={e=>setF({...f,is_accessible:e.target.checked})}/> Accessible table ♿</label><label>Table notes<textarea value={f.notes} onChange={e=>setF({...f,notes:e.target.value})}/></label><div className="ma"><button type="button" onClick={close}>Cancel</button><button className="primary">Save</button></div></form></Modal>}
 
-const css=`*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:#f5f7fa;color:#172033}button,input,select,textarea{font:inherit}button{cursor:pointer;border:1px solid #d8dee8;background:#fff;border-radius:8px;padding:9px 12px}.primary{background:#172033;color:#fff;border-color:#172033}.danger{color:#b42318}.link{border:0;background:none;color:#315fdb}.auth{min-height:100vh;display:grid;place-items:center}.card{background:#fff;padding:36px;border-radius:18px;box-shadow:0 12px 40px #0001;width:min(430px,92vw)}.card form{display:grid;gap:12px}.card input{padding:12px;border:1px solid #ccd3df;border-radius:8px}.error{color:#b42318}header{background:#fff;border-bottom:1px solid #e4e8ef;padding:15px 24px;display:flex;justify-content:space-between;align-items:center}header h1{margin:0;font-size:25px}.layout{display:grid;grid-template-columns:260px 1fr;max-width:1400px;margin:auto;min-height:calc(100vh - 72px)}aside{background:#fff;border-right:1px solid #e4e8ef;padding:15px}aside button{display:block;width:100%;text-align:left;border:0;margin-top:6px}aside small{display:block;color:#758096;margin-top:4px}.sel{background:#eef2ff}.content{padding:22px;max-width:1100px}.hero{background:#fff;border:1px solid #e3e7ee;border-radius:14px;padding:20px;display:flex;justify-content:space-between;margin-bottom:18px}.hero h2{margin:0 0 6px}.hero p{margin:0;color:#6a7587}.heroRight{display:flex;flex-direction:column;align-items:flex-end;gap:12px}.settingsSummary{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px;color:#667085;font-size:13px}.settingsSummary span{background:#f5f7fa;padding:7px 9px;border-radius:7px}.settingNote{background:#f5f7fa;border:1px solid #e3e7ee;border-radius:8px;padding:10px;color:#667085;font-size:13px;line-height:1.4}.stats{display:flex;gap:15px;align-items:center;flex-wrap:wrap}.stats b{background:#f5f7fa;padding:10px 12px;border-radius:8px}.panel{background:#fff;border:1px solid #e3e7ee;border-radius:14px;margin-bottom:18px;padding:16px}.ph{display:flex;justify-content:space-between;align-items:center}.ph h3{margin:0}.row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid #edf0f4}.row small{display:block;color:#707b8d;margin-top:4px}.actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap}.qr{border:1px dashed #aab3c2;border-radius:6px;padding:8px;text-align:center;font-size:11px}.qrLarge{display:flex;justify-content:center;align-items:center;padding:8px}.qrLarge img{width:320px;height:320px;max-width:100%;image-rendering:auto}.scoreLink{padding:9px 12px;border:1px solid #d8dee8;border-radius:8px;text-decoration:none;color:#172033;background:#fff}.muted{color:#778194}.empty{padding:70px 30px}.notice{margin:14px auto;padding:10px 14px;background:#fff4e5;border:1px solid #ffd7a3;width:94%;border-radius:8px}.notice button{float:right;padding:2px 7px}.backdrop{position:fixed;inset:0;background:#0006;display:grid;place-items:center;padding:18px}.modal{background:#fff;width:min(520px,95vw);border-radius:14px;padding:18px}.mh{display:flex;justify-content:space-between;align-items:center}.modal form{display:grid;gap:12px}.modal label{display:grid;gap:5px;font-weight:600}.modal input,.modal select,.modal textarea{padding:10px;border:1px solid #ccd3df;border-radius:8px}.modal textarea{min-height:80px}.check{display:flex!important;align-items:center;gap:8px}.ma{display:flex;justify-content:flex-end;gap:8px}@media(max-width:850px){.heroRight{align-items:flex-start;margin-top:15px}.layout{grid-template-columns:1fr}aside{border-right:0;border-bottom:1px solid #e4e8ef}.hero{display:block}.row{flex-direction:column;align-items:flex-start}.actions{width:100%}}`;
+const css=`*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:#f5f7fa;color:#172033}button,input,select,textarea{font:inherit}button{cursor:pointer;border:1px solid #d8dee8;background:#fff;border-radius:8px;padding:9px 12px}.primary{background:#172033;color:#fff;border-color:#172033}.danger{color:#b42318}.link{border:0;background:none;color:#315fdb}.auth{min-height:100vh;display:grid;place-items:center}.card{background:#fff;padding:36px;border-radius:18px;box-shadow:0 12px 40px #0001;width:min(430px,92vw)}.card form{display:grid;gap:12px}.card input{padding:12px;border:1px solid #ccd3df;border-radius:8px}.error{color:#b42318}header{background:#fff;border-bottom:1px solid #e4e8ef;padding:15px 24px;display:flex;justify-content:space-between;align-items:center}header h1{margin:0;font-size:25px}.layout{display:grid;grid-template-columns:260px 1fr;max-width:1400px;margin:auto;min-height:calc(100vh - 72px)}aside{background:#fff;border-right:1px solid #e4e8ef;padding:15px}aside button{display:block;width:100%;text-align:left;border:0;margin-top:6px}aside small{display:block;color:#758096;margin-top:4px}.sel{background:#eef2ff}.content{padding:22px;max-width:1100px}.hero{background:#fff;border:1px solid #e3e7ee;border-radius:14px;padding:20px;display:flex;justify-content:space-between;margin-bottom:18px}.hero h2{margin:0 0 6px}.hero p{margin:0;color:#6a7587}.heroRight{display:flex;flex-direction:column;align-items:flex-end;gap:12px}.settingsSummary{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px;color:#667085;font-size:13px}.settingsSummary span{background:#f5f7fa;padding:7px 9px;border-radius:7px}.settingNote{background:#f5f7fa;border:1px solid #e3e7ee;border-radius:8px;padding:10px;color:#667085;font-size:13px;line-height:1.4}.stats{display:flex;gap:15px;align-items:center;flex-wrap:wrap}.stats b{background:#f5f7fa;padding:10px 12px;border-radius:8px}.panel{background:#fff;border:1px solid #e3e7ee;border-radius:14px;margin-bottom:18px;padding:16px}.ph{display:flex;justify-content:space-between;align-items:center}.ph h3{margin:0}.row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid #edf0f4}.row small{display:block;color:#707b8d;margin-top:4px}.actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap}.qr{border:1px dashed #aab3c2;border-radius:6px;padding:8px;text-align:center;font-size:11px}.qrLarge{display:flex;justify-content:center;align-items:center;padding:8px}.qrLarge img{width:320px;height:320px;max-width:100%;image-rendering:auto}.scoreLink{padding:9px 12px;border:1px solid #d8dee8;border-radius:8px;text-decoration:none;color:#172033;background:#fff}.muted{color:#778194}.drawTools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}.empty{padding:70px 30px}.notice{margin:14px auto;padding:10px 14px;background:#fff4e5;border:1px solid #ffd7a3;width:94%;border-radius:8px}.notice button{float:right;padding:2px 7px}.backdrop{position:fixed;inset:0;background:#0006;display:grid;place-items:center;padding:18px}.modal{background:#fff;width:min(520px,95vw);border-radius:14px;padding:18px}.mh{display:flex;justify-content:space-between;align-items:center}.modal form{display:grid;gap:12px}.modal label{display:grid;gap:5px;font-weight:600}.modal input,.modal select,.modal textarea{padding:10px;border:1px solid #ccd3df;border-radius:8px}.modal textarea{min-height:80px}.check{display:flex!important;align-items:center;gap:8px}.ma{display:flex;justify-content:flex-end;gap:8px}@media(max-width:850px){.heroRight{align-items:flex-start;margin-top:15px}.layout{grid-template-columns:1fr}aside{border-right:0;border-bottom:1px solid #e4e8ef}.hero{display:block}.row{flex-direction:column;align-items:flex-start}.actions{width:100%}}`;
