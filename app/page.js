@@ -36,12 +36,12 @@ export default function Home() {
     return()=>clearInterval(timer);
   },[session,selected]);
 
-  async function loadPlayerDB(){const {data,error}=await supabase.from('players').select('id,first_name,last_name,display_name,phone,email,club_name').order('display_name',{ascending:true});if(error)setMsg(error.message);else setPlayerDB(data||[])}
+  async function loadPlayerDB(){const {data,error}=await supabase.from('players').select('id,first_name,last_name,display_name,phone,email,club_name,requires_accessible_table').order('display_name',{ascending:true});if(error)setMsg(error.message);else setPlayerDB(data||[])}
 
   async function loadCompetitions(){const {data,error}=await supabase.from('competitions').select('*').order('start_date',{ascending:true}); if(error)setMsg(error.message);else setCompetitions(data||[])}
   async function load(c){setSelected(c);
     const [p,m,t]=await Promise.all([
-      supabase.from('competition_players').select('id,player_id,checked_in,players(id,first_name,last_name,display_name,phone,email,club_name)').eq('competition_id',c.id),
+      supabase.from('competition_players').select('id,player_id,checked_in,players(id,first_name,last_name,display_name,phone,email,club_name,requires_accessible_table)').eq('competition_id',c.id),
       supabase.from('competition_matches').select('*').eq('competition_id',c.id).order('match_number'),
       supabase.from('tournament_tables').select('*').eq('competition_id',c.id).order('table_number')
     ]); setPlayers(p.data||[]);setMatches(m.data||[]);setTables(t.data||[])}
@@ -95,7 +95,7 @@ export default function Home() {
     if(r.error)setAuthMsg(r.error.message)
   }
   async function savePlayer(f){let error;
-    const data={first_name:f.first_name.trim(),last_name:f.last_name.trim(),display_name:`${f.first_name.trim()} ${f.last_name.trim()}`.trim(),phone:f.phone.trim(),email:f.email.trim(),club_name:f.club_name.trim()};
+    const data={first_name:f.first_name.trim(),last_name:f.last_name.trim(),display_name:`${f.first_name.trim()} ${f.last_name.trim()}`.trim(),phone:f.phone.trim(),email:f.email.trim(),club_name:f.club_name.trim(),requires_accessible_table:!!f.requires_accessible_table};
     if(f.playerId) ({error}=await supabase.from('players').update(data).eq('id',f.playerId));
     else {const r=await supabase.from('players').insert(data).select().single();error=r.error;if(!error)({error}=await supabase.from('competition_players').insert({competition_id:selected.id,player_id:r.data.id,checked_in:false}))}
     if(error)setMsg(error.message);else{setModal(null);load(selected)}
@@ -121,7 +121,7 @@ export default function Home() {
   }
 
   async function saveMasterPlayer(f){
-    const data={first_name:f.first_name.trim(),last_name:f.last_name.trim(),display_name:`${f.first_name.trim()} ${f.last_name.trim()}`.trim(),phone:f.phone.trim(),email:f.email.trim(),club_name:f.club_name.trim()};
+    const data={first_name:f.first_name.trim(),last_name:f.last_name.trim(),display_name:`${f.first_name.trim()} ${f.last_name.trim()}`.trim(),phone:f.phone.trim(),email:f.email.trim(),club_name:f.club_name.trim(),requires_accessible_table:!!f.requires_accessible_table};
     const r=f.playerId
       ? await supabase.from('players').update(data).eq('id',f.playerId)
       : await supabase.from('players').insert(data);
@@ -150,6 +150,11 @@ export default function Home() {
   }
   async function delTable(t){if(!confirm(`Delete Table ${t.table_number}?`))return;const r=await supabase.from('tournament_tables').delete().eq('id',t.id);if(r.error)setMsg(r.error.message);else load(selected)}
   async function assign(m,id){
+    if(id){
+      const t=tables.find(x=>x.id===id);
+      const needsAccessible=[m.player1_id,m.player2_id].some(pid=>players.find(x=>x.player_id===pid)?.players?.requires_accessible_table);
+      if(needsAccessible && !t?.is_accessible){setMsg('This match includes a player who requires an accessible table. Please assign an accessible table.');return;}
+    }
     const previous=m.table_id;
     if(previous===id)return;
     if(previous)await supabase.from('tournament_tables').update({status:'available'}).eq('id',previous);
@@ -160,6 +165,8 @@ export default function Home() {
 
   async function quickAssign(m,t){
     if(!m || !t || t.status==='unavailable' || m.status!=='scheduled') return;
+    const needsAccessible=[m.player1_id,m.player2_id].some(pid=>players.find(x=>x.player_id===pid)?.players?.requires_accessible_table);
+    if(needsAccessible && !t.is_accessible){setMsg(`Match ${m.match_number} requires an accessible table.`);return;}
     await assign(m,t.id);
     setMsg(`Match ${m.match_number} assigned to Table ${t.table_number}.`);
   }
@@ -167,19 +174,21 @@ export default function Home() {
   async function assignNextReady(){
     const ready=matches.filter(m=>m.status==='scheduled' && !m.table_id);
     const free=tables.filter(t=>t.status==='available');
-    if(!ready.length){setMsg('There are no unassigned matches ready to play.');return;}
-    if(!free.length){setMsg('There are no available tables.');return;}
-    const count=Math.min(ready.length,free.length);
-    for(let i=0;i<count;i++){
-      const m=ready[i], t=free[i];
+    let assigned=0;
+    for(const m of ready){
+      const needs=[m.player1_id,m.player2_id].some(pid=>players.find(x=>x.player_id===pid)?.players?.requires_accessible_table);
+      const t=free.find(x=>!needs || x.is_accessible);
+      if(!t) continue;
       const r=await supabase.from('competition_matches').update({table_id:t.id}).eq('id',m.id);
       if(r.error){setMsg(r.error.message);return;}
       const tr=await supabase.from('tournament_tables').update({status:'occupied'}).eq('id',t.id);
       if(tr.error){setMsg(tr.error.message);return;}
+      free.splice(free.indexOf(t),1); assigned++;
     }
     await load(selected);
-    setMsg(`${count} ready match${count===1?'':'es'} assigned to available table${count===1?'':'s'}.`);
+    setMsg(assigned ? `${assigned} ready match${assigned===1?'':'es'} assigned to suitable available table${assigned===1?'':'s'}.` : 'No ready match could be assigned. Check that an accessible table is available for players who require one.');
   }
+
   function playerName(id){
     const p=players.find(x=>x.player_id===id)?.players;
     return p?.display_name || `${p?.first_name||''} ${p?.last_name||''}`.trim() || 'TBC';
@@ -351,6 +360,7 @@ export default function Home() {
     const activeMatches=matches.filter(m=>m.table_id && m.status!=='completed');
     const ready=matches.filter(m=>m.status==='scheduled' && !m.table_id);
     const available=tables.filter(t=>t.status==='available');
+    const eligibleAvailable=(m)=>available.filter(t=>{const needs=[m.player1_id,m.player2_id].some(pid=>players.find(x=>x.player_id===pid)?.players?.requires_accessible_table);return !needs || t.is_accessible;});
     return <div>
       <div className="controlSummary">
         <div><strong>{activeMatches.length}</strong><span>Playing / assigned</span></div>
@@ -372,7 +382,7 @@ export default function Home() {
               {active ? <div>
                 <div className="controlMatch">Match {active.match_number}</div>
                 <div>{playerName(active.player1_id)} <b>vs</b> {playerName(active.player2_id)}</div>
-                <small>Race to {active.race_to} · Score {active.score1??0}–{active.score2??0}</small>
+                <small>Race to {active.race_to} · Score {active.score1??0}–{active.score2??0}{[active.player1_id,active.player2_id].some(pid=>players.find(x=>x.player_id===pid)?.players?.requires_accessible_table)?' · ♿ Accessible table required':''}</small>
                 <a className="scoreLink controlScore" href={`/score/${t.table_token||t.id}`} target="_blank" rel="noreferrer">📱 Open scoring</a>
               </div> :
               <div className="controlEmpty">{t.status==='unavailable'?'Unavailable':'No match assigned'}</div>}
@@ -386,10 +396,10 @@ export default function Home() {
         {ready.map(m=><div className="readyRow" key={m.id}>
           <div><strong>Match {m.match_number}</strong><span>{playerName(m.player1_id)} vs {playerName(m.player2_id)} · Race to {m.race_to}</span></div>
           <div className="actions">
-            {available[0] && <button onClick={()=>quickAssign(m,available[0])}>Assign Table {available[0].table_number}</button>}
+            {eligibleAvailable(m)[0] && <button onClick={()=>quickAssign(m,eligibleAvailable(m)[0])}>Assign Table {eligibleAvailable(m)[0].table_number}{eligibleAvailable(m)[0].is_accessible?' ♿':''}</button>}
             <select defaultValue="" onChange={e=>{if(e.target.value){const t=tables.find(x=>x.id===e.target.value);quickAssign(m,t)}}}>
               <option value="">Choose table…</option>
-              {available.map(t=><option key={t.id} value={t.id}>Table {t.table_number}{t.is_accessible?' ♿':''}</option>)}
+              {eligibleAvailable(m).map(t=><option key={t.id} value={t.id}>Table {t.table_number}{t.is_accessible?' ♿':''}</option>)}
             </select>
           </div>
         </div>)}
@@ -409,7 +419,7 @@ export default function Home() {
 
   <Panel title="Players" add={()=>setModal({type:'player'})} addText="＋ Add player">
     <div className="drawTools"><button onClick={()=>setModal({type:'playerdb'})}>👥 Add from player database</button></div>
-    {players.map(p=><div className="row" key={p.id}><div><b>{p.players?.display_name || `${p.players?.first_name||''} ${p.players?.last_name||''}`.trim() || 'Unnamed Player'}</b><small>{p.players?.club_name||'No club'}{p.players?.phone?` · ${p.players.phone}`:''}</small></div><div className="actions"><button onClick={()=>setModal({type:'player',p})}>✏️ Edit</button><button onClick={()=>checkin(p)}>{p.checked_in?'✓ Checked in':'Check in'}</button><button className="danger" onClick={()=>removePlayer(p)}>🗑️ Remove</button></div></div>)}
+    {players.map(p=><div className="row" key={p.id}><div><b>{p.players?.display_name || `${p.players?.first_name||''} ${p.players?.last_name||''}`.trim() || 'Unnamed Player'}</b><small>{p.players?.club_name||'No club'}{p.players?.phone?` · ${p.players.phone}`:''}{p.players?.requires_accessible_table?' · ♿ Accessible table required':''}</small></div><div className="actions"><button onClick={()=>setModal({type:'player',p})}>✏️ Edit</button><button onClick={()=>checkin(p)}>{p.checked_in?'✓ Checked in':'Check in'}</button><button className="danger" onClick={()=>removePlayer(p)}>🗑️ Remove</button></div></div>)}
   </Panel>
 
   <Panel title="Tables" add={()=>setModal({type:'table'})} addText="＋ Add table">
@@ -427,7 +437,7 @@ export default function Home() {
         {playerName(m.player1_id)} vs {playerName(m.player2_id)} · Race to {m.race_to} · {m.status}
         {m.status==='completed' && <> · <strong>Result: {m.score1 ?? 0} – {m.score2 ?? 0}</strong>{m.winner_id ? <> · Winner: {playerName(m.winner_id)}</> : null}{Number(m.race_to)===1 && m.winner_balls !== null && m.winner_balls !== undefined ? <> · {m.winner_balls} balls remaining</> : null}</>}
       </small></div>
-      <select value={m.table_id||''} onChange={e=>assign(m,e.target.value)} disabled={m.status==='completed'}><option value="">Unassigned</option>{tables.filter(t=>t.status!=='unavailable').map(t=><option key={t.id} value={t.id}>Table {t.table_number}{t.is_accessible?' ♿':''}</option>)}</select>
+      <select value={m.table_id||''} onChange={e=>assign(m,e.target.value)} disabled={m.status==='completed'}><option value="">Unassigned</option>{tables.filter(t=>{if(t.status==='unavailable')return false;const needs=[m.player1_id,m.player2_id].some(pid=>players.find(x=>x.player_id===pid)?.players?.requires_accessible_table);return !needs || t.is_accessible;}).map(t=><option key={t.id} value={t.id}>Table {t.table_number}{t.is_accessible?' ♿':''}</option>)}</select>
     </div>)}
   </Panel>
   {matches.length>0 && <Panel title="Tournament Control">
@@ -504,16 +514,16 @@ function PlayerDatabaseModal({players,currentPlayers,close,add,edit,deletePlayer
     <div className="dbList">
       {filtered.length===0&&<p className="muted">No players found.</p>}
       {filtered.map(p=><div className="row" key={p.id}>
-        <div><b>{p.display_name||`${p.first_name||''} ${p.last_name||''}`.trim()}</b><small>{p.club_name||'No club'}{p.phone?` · ${p.phone}`:''}{p.email?` · ${p.email}`:''}</small></div>
+        <div><b>{p.display_name||`${p.first_name||''} ${p.last_name||''}`.trim()}</b><small>{p.club_name||'No club'}{p.phone?` · ${p.phone}`:''}{p.email?` · ${p.email}`:''}{p.requires_accessible_table?' · ♿ Accessible table required':''}</small></div>
         <div className="actions"><button onClick={()=>edit(p)}>✏️ Edit</button>{current.has(p.id)?<button disabled>✓ In competition</button>:<button className="primary" onClick={()=>add(p)}>＋ Add</button>}<button className="danger" onClick={()=>deletePlayer(p)}>🗑️ Delete</button></div>
       </div>)}
     </div>
   </Modal>
 }
 
-function PlayerModal({p,close,save}){const x=p?.players||{};const[f,setF]=useState({playerId:x.id||'',first_name:x.first_name||'',last_name:x.last_name||'',phone:x.phone||'',email:x.email||'',club_name:x.club_name||''});return <Modal title={p?'Edit player':'Add player'} close={close}><form onSubmit={e=>{e.preventDefault();save(f)}}><label>First name<input required value={f.first_name} onChange={e=>setF({...f,first_name:e.target.value})}/></label><label>Last name<input required value={f.last_name} onChange={e=>setF({...f,last_name:e.target.value})}/></label><label>Phone<input value={f.phone} onChange={e=>setF({...f,phone:e.target.value})}/></label><label>Email<input type="email" value={f.email} onChange={e=>setF({...f,email:e.target.value})}/></label><label>Club<input value={f.club_name} onChange={e=>setF({...f,club_name:e.target.value})}/></label><div className="ma"><button type="button" onClick={close}>Cancel</button><button className="primary">Save changes</button></div></form></Modal>}
+function PlayerModal({p,close,save}){const x=p?.players||{};const[f,setF]=useState({playerId:x.id||'',first_name:x.first_name||'',last_name:x.last_name||'',phone:x.phone||'',email:x.email||'',club_name:x.club_name||''});return <Modal title={p?'Edit player':'Add player'} close={close}><form onSubmit={e=>{e.preventDefault();save(f)}}><label>First name<input required value={f.first_name} onChange={e=>setF({...f,first_name:e.target.value})}/></label><label>Last name<input required value={f.last_name} onChange={e=>setF({...f,last_name:e.target.value})}/></label><label>Phone<input value={f.phone} onChange={e=>setF({...f,phone:e.target.value})}/></label><label>Email<input type="email" value={f.email} onChange={e=>setF({...f,email:e.target.value})}/></label><label>Club<input value={f.club_name} onChange={e=>setF({...f,club_name:e.target.value})}/></label><label className="check"><input type="checkbox" checked={f.requires_accessible_table} onChange={e=>setF({...f,requires_accessible_table:e.target.checked})}/> Requires accessible table ♿</label><div className="ma"><button type="button" onClick={close}>Cancel</button><button className="primary">Save changes</button></div></form></Modal>}
 function MasterPlayerModal({p,close,save,allowAdd}){
-  const[f,setF]=useState({playerId:p?.id||'',first_name:p?.first_name||'',last_name:p?.last_name||'',phone:p?.phone||'',email:p?.email||'',club_name:p?.club_name||'',addToCompetition:false});
+  const[f,setF]=useState({playerId:p?.id||'',first_name:p?.first_name||'',last_name:p?.last_name||'',phone:p?.phone||'',email:p?.email||'',club_name:p?.club_name||'',requires_accessible_table:!!p?.requires_accessible_table,addToCompetition:false});
   return <Modal title={p?'Edit player':'New player'} close={close}>
     <form onSubmit={e=>{e.preventDefault();save(f)}}>
       <label>First name<input required value={f.first_name} onChange={e=>setF({...f,first_name:e.target.value})}/></label>
@@ -521,6 +531,7 @@ function MasterPlayerModal({p,close,save,allowAdd}){
       <label>Phone<input value={f.phone} onChange={e=>setF({...f,phone:e.target.value})}/></label>
       <label>Email<input type="email" value={f.email} onChange={e=>setF({...f,email:e.target.value})}/></label>
       <label>Club<input value={f.club_name} onChange={e=>setF({...f,club_name:e.target.value})}/></label>
+       <label className="check"><input type="checkbox" checked={f.requires_accessible_table} onChange={e=>setF({...f,requires_accessible_table:e.target.checked})}/> Requires accessible table ♿</label>
       {allowAdd&&<label className="check"><input type="checkbox" checked={f.addToCompetition} onChange={e=>setF({...f,addToCompetition:e.target.checked})}/> Add to current competition</label>}
       <div className="ma"><button type="button" onClick={close}>Cancel</button><button className="primary">{p?'Save player':'Create player'}</button></div>
     </form>

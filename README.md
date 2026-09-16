@@ -55,3 +55,6 @@ Adds a visual knockout bracket and a tournament control panel. The existing publ
 
 ## V9.1
 Adds live tournament-day control: organiser data refreshes every 5 seconds while a competition is open, table cards show current match and score, ready matches are queued with quick table assignment, and an "Assign next ready" action fills available tables.
+
+## V9.2
+Adds a player-directory setting for Requires accessible table. Matches containing a player with this setting can only be assigned to accessible tables; automatic assignment respects the requirement.
