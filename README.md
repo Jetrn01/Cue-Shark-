@@ -125,3 +125,13 @@ Reverse Crossover is now designed as a flexible format rather than a 4x4-only co
 - Adds a Reverse Crossover preview so the organiser can review pairings before confirming.
 - Preserves the existing knockout progression, scoring, accessibility priority and recurring tournament features.
 - No new database tables are required for this UI enhancement.
+
+
+## V10.4 Flexible Reverse Crossover + Odd Players
+- Reverse Crossover no longer requires exactly 16 players.
+- Draw Builder supports 2, 4, 6 or 8 even-numbered groups, limited by the checked-in player count.
+- Players are distributed as evenly as possible across groups.
+- Uneven groups and odd total player counts are handled with explicit crossover byes.
+- Reverse pairing is highest finish vs lowest finish, then next-highest vs next-lowest.
+- Crossover is padded to a power of two and legitimate byes cascade through later rounds.
+- Existing scoring, automatic progression, accessibility priority and recurring tournament features are preserved.

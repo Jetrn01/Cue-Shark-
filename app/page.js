@@ -388,65 +388,71 @@ export default function Home() {
     if(!selected)return;
     const checkedPlayers=players.filter(p=>p.checked_in).map(p=>p.player_id).filter(Boolean);
     const groupCount=Number(settings.group_count||4);
-    if(checkedPlayers.length!==16 || groupCount!==4){setMsg('This format requires exactly 16 checked-in players: 4 groups of 4.');return;}
+    if(checkedPlayers.length<2){setMsg('Check in at least 2 players before creating groups.');return;}
+    if(groupCount<2 || groupCount%2!==0 || groupCount>Math.floor(checkedPlayers.length/2)){setMsg(`Choose an even number of groups between 2 and ${Math.floor(checkedPlayers.length/2)} for ${checkedPlayers.length} players.`);return;}
     if(matches.length){
       if(matches.some(m=>['completed','in_progress','active'].includes(m.status))){setMsg('This competition already has matches in progress or completed. A new draw cannot replace them.');return;}
-      if(!window.confirm('Replace the existing draw? This removes the current scheduled matches and creates the group-stage draw.'))return;
+      if(!window.confirm('Replace the existing draw? This removes the current scheduled matches and creates the new group-stage draw.'))return;
       const {error}=await supabase.from('competition_matches').delete().eq('competition_id',selected.id);
       if(error){setMsg(error.message);return;}
     }
     const race=Number(settings.race_to||selected.default_race_to||3);
-    const groups=[[],[],[],[]];
-    checkedPlayers.forEach((id,i)=>groups[i%4].push(id));
+    const groups=Array.from({length:groupCount},()=>[]);
+    checkedPlayers.forEach((id,i)=>groups[i%groupCount].push(id));
     const rows=[]; let n=1;
     groups.forEach((group,gi)=>{
-      for(let i=0;i<4;i++) for(let j=i+1;j<4;j++) rows.push({competition_id:selected.id,match_number:n++,round_number:1,group_name:String.fromCharCode(65+gi),player1_id:group[i],player2_id:group[j],race_to:race,status:'scheduled',score1:0,score2:0,table_id:null});
+      for(let i=0;i<group.length;i++) for(let j=i+1;j<group.length;j++) rows.push({competition_id:selected.id,match_number:n++,round_number:1,group_name:String.fromCharCode(65+gi),player1_id:group[i],player2_id:group[j],race_to:race,status:'scheduled',score1:0,score2:0,table_id:null});
     });
+    if(!rows.length){setMsg('Could not create group matches.');return;}
     const {error}=await supabase.from('competition_matches').insert(rows);
     if(error){setMsg(`Could not create group draw: ${error.message}`);return;}
-    await load(selected);setModal(null);setMsg('4 groups of 4 created. Complete the group stage, then use Generate Reverse Crossover.');
+    await load(selected);setModal(null);setMsg(`${checkedPlayers.length} players placed into ${groupCount} balanced groups. Complete the group stage, then generate the Reverse Crossover.`);
   }
 
   async function generateReverseCrossover(){
     if(!selected)return;
     const groupMatches=matches.filter(m=>m.round_number===1 && m.group_name);
-    if(groupMatches.length!==24 || groupMatches.some(m=>m.status!=='completed')){setMsg('Complete all 24 group-stage matches before generating the reverse crossover.');return;}
-    const standings={A:{},B:{},C:{},D:{}};
+    if(!groupMatches.length || groupMatches.some(m=>m.status!=='completed')){setMsg('Complete all group-stage matches before generating the reverse crossover.');return;}
+    const groupNames=[...new Set(groupMatches.map(m=>m.group_name))].sort();
+    if(groupNames.length<2 || groupNames.length%2!==0){setMsg('Reverse Crossover requires an even number of groups so each group can be paired with another group.');return;}
+    const standings={}; groupNames.forEach(g=>standings[g]={});
     for(const m of groupMatches){
-      if(!m.winner_id)continue;
       const group=standings[m.group_name];
-      for(const id of [m.player1_id,m.player2_id]){if(!group[id])group[id]={id,wins:0,for:0,against:0};}
-      group[m.winner_id].wins++;
-      group[m.player1_id].for+=Number(m.score1||0); group[m.player1_id].against+=Number(m.score2||0);
-      group[m.player2_id].for+=Number(m.score2||0); group[m.player2_id].against+=Number(m.score1||0);
+      for(const id of [m.player1_id,m.player2_id]){if(id&&!group[id])group[id]={id,wins:0,for:0,against:0};}
+      if(m.winner_id&&group[m.winner_id])group[m.winner_id].wins++;
+      if(m.player1_id&&group[m.player1_id]){group[m.player1_id].for+=Number(m.score1||0);group[m.player1_id].against+=Number(m.score2||0);}
+      if(m.player2_id&&group[m.player2_id]){group[m.player2_id].for+=Number(m.score2||0);group[m.player2_id].against+=Number(m.score1||0);}
     }
     const ranked={};
-    for(const g of ['A','B','C','D']){
+    for(const g of groupNames){
       const vals=Object.values(standings[g]);
-      if(vals.length!==4){setMsg(`Could not calculate Group ${g} standings.`);return;}
+      if(vals.length<2){setMsg(`Group ${g} does not contain enough players for a crossover.`);return;}
       vals.sort((a,b)=>b.wins-a.wins || (b.for-b.against)-(a.for-a.against) || b.for-a.for || a.id.localeCompare(b.id));
       ranked[g]=vals;
     }
-    const pairs=[['A','B'],['C','D']];
-    const all=[];let n=Math.max(...matches.map(m=>m.match_number||0))+1;let matchNo=n;
+    const pairs=[]; for(let i=0;i<groupNames.length/2;i++)pairs.push([groupNames[i],groupNames[groupNames.length-1-i]]);
+    const crossover=[]; let matchNo=Math.max(...matches.map(m=>m.match_number||0))+1;
     for(const [g1,g2] of pairs){
-      for(let pos=0;pos<4;pos++){
-        const p1=ranked[g1][pos].id,p2=ranked[g2][3-pos].id;
-        all.push({competition_id:selected.id,match_number:matchNo++,round_number:2,group_name:null,player1_id:p1,player2_id:p2,race_to:Number(selected.default_race_to||3),status:'scheduled',score1:0,score2:0,table_id:null});
+      const left=ranked[g1],right=ranked[g2],len=Math.max(left.length,right.length);
+      for(let pos=0;pos<len;pos++){
+        const p1=left[pos]?.id||null,p2=right[right.length-1-pos]?.id||null,bye=!!p1!==!!p2;
+        crossover.push({id:crypto.randomUUID(),competition_id:selected.id,match_number:matchNo++,round_number:2,group_name:null,player1_id:p1,player2_id:p2,race_to:Number(selected.default_race_to||3),status:bye?'bye':'scheduled',score1:0,score2:0,table_id:null,next_match_id:null,next_slot:null,winner_id:bye?(p1||p2):null,loser_id:null});
       }
     }
-    // Link the 8 reverse-crossover matches into a standard 8->4->2->1 knockout.
-    let prev=all.slice(0,8); const rounds=[prev];
-    for(let r=3;r<=5;r++){
-      const cur=[];for(let i=0;i<prev.length/2;i++){
-        const row={id:crypto.randomUUID(),competition_id:selected.id,match_number:matchNo++,round_number:r,group_name:null,player1_id:null,player2_id:null,race_to:Number(selected.default_race_to||3),status:'waiting',score1:0,score2:0,table_id:null,next_match_id:null,next_slot:null,winner_id:null,loser_id:null};cur.push(row);}
-      rounds.push(cur);prev=cur;
+    const target=2**Math.ceil(Math.log2(crossover.length));
+    while(crossover.length<target)crossover.push({id:crypto.randomUUID(),competition_id:selected.id,match_number:matchNo++,round_number:2,group_name:null,player1_id:null,player2_id:null,race_to:Number(selected.default_race_to||3),status:'waiting',score1:0,score2:0,table_id:null,next_match_id:null,next_slot:null,winner_id:null,loser_id:null});
+    const rounds=[crossover]; let prev=crossover,roundNo=3;
+    while(prev.length>1){const cur=[];for(let i=0;i<prev.length/2;i++)cur.push({id:crypto.randomUUID(),competition_id:selected.id,match_number:matchNo++,round_number:roundNo,group_name:null,player1_id:null,player2_id:null,race_to:Number(selected.default_race_to||3),status:'waiting',score1:0,score2:0,table_id:null,next_match_id:null,next_slot:null,winner_id:null,loser_id:null});rounds.push(cur);prev=cur;roundNo++;}
+    const all=rounds.flat();
+    for(let r=0;r<rounds.length-1;r++)for(let i=0;i<rounds[r].length;i++){rounds[r][i].next_match_id=rounds[r+1][Math.floor(i/2)].id;rounds[r][i].next_slot=(i%2)+1;}
+    const possible=new Map(rounds[0].map(m=>[m.id,!!(m.player1_id||m.player2_id)]));
+    for(let r=0;r<rounds.length-1;r++){
+      for(const feeder of rounds[r])if(feeder.status==='bye'&&feeder.winner_id){const targetMatch=all.find(x=>x.id===feeder.next_match_id);if(targetMatch){if(feeder.next_slot===1)targetMatch.player1_id=feeder.winner_id;else targetMatch.player2_id=feeder.winner_id;}}
+      for(const targetMatch of rounds[r+1]){const feeders=rounds[r].filter(f=>f.next_match_id===targetMatch.id);possible.set(targetMatch.id,feeders.some(f=>possible.get(f.id)));if(targetMatch.player1_id&&targetMatch.player2_id){targetMatch.status='scheduled';continue;}const sole=targetMatch.player1_id||targetMatch.player2_id;if(!sole)continue;const missingSlot=targetMatch.player1_id?2:1,missing=feeders.find(f=>f.next_slot===missingSlot);if(missing&&!possible.get(missing.id)){targetMatch.status='bye';targetMatch.winner_id=sole;}}
     }
-    for(let r=0;r<rounds.length-1;r++) for(let i=0;i<rounds[r].length;i++){rounds[r][i].next_match_id=rounds[r+1][Math.floor(i/2)].id;rounds[r][i].next_slot=(i%2)+1;}
-    // Give the round-2 matches stable ids and keep them scheduled.
-    const {error}=await supabase.from('competition_matches').insert([...all,...rounds.slice(1).flat()]);
+    const {error}=await supabase.from('competition_matches').insert(all);
     if(error){setMsg(`Could not create reverse crossover: ${error.message}`);return;}
-    await load(selected);setMsg('Reverse crossover created: A1 vs B4, A2 vs B3, A3 vs B2, A4 vs B1; C/D follow the same pattern.');
+    await load(selected);setMsg(`Reverse crossover created for ${groupNames.length} groups. Highest finishes play the lowest finishes in their paired group.`);
   }
 
   async function generateKnockout(){
@@ -700,7 +706,7 @@ export default function Home() {
   <Panel title="Matches & Table Assignment">
     <div className="drawTools">
       <button className="primary" onClick={()=>setModal({type:'draw'})}>🎱 {matches.length?'Edit / Regenerate Draw':'Create Draw'}</button>
-      {matches.some(m=>m.group_name)&&matches.filter(m=>m.group_name).length===24&&matches.filter(m=>m.group_name).every(m=>m.status==='completed')&&<button onClick={generateReverseCrossover}>🏆 Generate Reverse Crossover</button>}
+      {matches.some(m=>m.group_name)&&matches.filter(m=>m.group_name).every(m=>m.status==='completed')&&<button onClick={generateReverseCrossover}>🏆 Generate Reverse Crossover</button>}
       {matches.length===0&&<p className="muted">No matches created yet.</p>}
     </div>
     {matches.map(m=><div className="row" key={m.id}>
@@ -735,11 +741,18 @@ export default function Home() {
 function Panel({title,add,addText,children}){return <div className="panel"><div className="ph"><h3>{title}</h3>{add&&<button className="primary" onClick={add}>{addText}</button>}</div>{children}</div>}
 function DrawModal({selected,players,settings,setSettings,close,generate}){
   const checked=players.filter(p=>p.checked_in).length;
+  const maxEvenGroups=Math.min(8,Math.floor(checked/2));
+  const groupOptions=[2,4,6,8].filter(n=>n<=maxEvenGroups);
+  const isReverse=settings.type==='Groups → Reverse Crossover' || settings.type==='4 Groups of 4 → Reverse Crossover';
+  const groupCount=groupOptions.includes(Number(settings.group_count))?Number(settings.group_count):(groupOptions[0]||2);
   return <Modal title="Draw Builder" close={close}>
     <p className="muted"><b>{checked}</b> checked-in players.</p>
-    <label>Draw type<select value={settings.type} onChange={e=>setSettings({...settings,type:e.target.value})}>
-      <option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Seeded Draw</option><option>4 Groups of 4 → Reverse Crossover</option>
+    <label>Draw type<select value={isReverse?'Groups → Reverse Crossover':settings.type} onChange={e=>setSettings({...settings,type:e.target.value})}>
+      <option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Seeded Draw</option><option>Groups → Reverse Crossover</option>
     </select></label>
+    {isReverse && <label>Number of groups<select value={groupCount} onChange={e=>setSettings({...settings,group_count:Number(e.target.value),type:'Groups → Reverse Crossover'})}>
+      {groupOptions.length?groupOptions.map(n=><option key={n} value={n}>{n} groups</option>):<option value="2">2 groups</option>}
+    </select></label>}
     <label>Race length<select value={settings.race_to} onChange={e=>setSettings({...settings,race_to:Number(e.target.value)})}>
       {[1,2,3,5,7,9].map(n=><option key={n} value={n}>Race to {n}</option>)}
     </select></label>
@@ -748,9 +761,10 @@ function DrawModal({selected,players,settings,setSettings,close,generate}){
       {settings.type==='Round Robin'&&'Every checked-in player plays every other player once.'}
       {settings.type==='Random Draw'&&'Players are shuffled before the knockout draw.'}
       {settings.type==='Seeded Draw'&&'Players stay in their current checked-in order as the seed order.'}
-      {settings.type==='4 Groups of 4 → Reverse Crossover'&&'Exactly 16 players: 4 groups of 4, then A1 vs B4, A2 vs B3, A3 vs B2, A4 vs B1; C/D follow the same pattern.'}
+      {isReverse&&`Players are split as evenly as possible into ${groupCount} groups. After the group stage, 1st plays last, 2nd plays second-last, and so on against the paired group. Odd or uneven crossover slots receive byes.`}
     </div>
-    <div className="ma"><button type="button" onClick={close}>Cancel</button><button className="primary" disabled={checked<2 || (settings.type==='4 Groups of 4 → Reverse Crossover' && checked!==16)} onClick={()=>settings.type==='4 Groups of 4 → Reverse Crossover'?generateGroupsReverseCrossover(settings):generate(settings)}>Generate Draw</button></div>
+    {isReverse && checked>=2 && <div className="drawPreviewNote"><strong>{checked} players:</strong> {groupCount} groups of about {Math.floor(checked/groupCount)}–{Math.ceil(checked/groupCount)} players. Any crossover byes will be shown in the generated draw.</div>}
+    <div className="ma"><button type="button" onClick={close}>Cancel</button><button className="primary" disabled={checked<2 || (isReverse && (groupOptions.length===0 || !groupOptions.includes(groupCount)))} onClick={()=>isReverse?generateGroupsReverseCrossover({...settings,type:'Groups → Reverse Crossover',group_count:groupCount}):generate(settings)}>Generate Draw</button></div>
   </Modal>
 }
 
@@ -826,7 +840,7 @@ function CompetitionModal({c,close,save}){
       <label>Venue<input value={f.venue} onChange={e=>setF({...f,venue:e.target.value})}/></label>
       <label>Date<input type="date" value={f.start_date||''} onChange={e=>setF({...f,start_date:e.target.value})}/></label>
       <label>Format<select value={f.format} onChange={e=>setF({...f,format:e.target.value})}>
-        <option>Singles</option><option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Seeded Draw</option><option>4 Groups of 4 → Reverse Crossover</option><option>Doubles</option><option>Teams</option><option>Custom</option>
+        <option>Singles</option><option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Seeded Draw</option><option>Groups → Reverse Crossover</option><option>Doubles</option><option>Teams</option><option>Custom</option>
       </select></label>
       <label>Rules<select value={f.rules} onChange={e=>setF({...f,rules:e.target.value})}><option>CNZ Rules</option><option>International Rules</option><option>Custom</option></select></label>
       <label>Default race length<select value={f.default_race_to} onChange={e=>setF({...f,default_race_to:Number(e.target.value)})}>{[1,2,3,5,7,9].map(n=><option key={n} value={n}>Race to {n}</option>)}</select></label>
@@ -856,7 +870,7 @@ function TemplateModal({t,close,save}){
       <label>Tournament name<input required value={f.name} placeholder="Thursday Night 8-Ball" onChange={e=>setF({...f,name:e.target.value})}/></label>
       <label>Venue<input value={f.venue} placeholder="Cambridge Cossie Club" onChange={e=>setF({...f,venue:e.target.value})}/></label>
       <label>Repeats every<select value={f.day_of_week} onChange={e=>setF({...f,day_of_week:Number(e.target.value)})}>{['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'].map((d,i)=><option key={d} value={i}>{d}</option>)}</select></label>
-      <label>Format<select value={f.format} onChange={e=>setF({...f,format:e.target.value})}><option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Seeded Draw</option><option>4 Groups of 4 → Reverse Crossover</option><option>Singles</option><option>Doubles</option><option>Teams</option><option>Custom</option></select></label>
+      <label>Format<select value={f.format} onChange={e=>setF({...f,format:e.target.value})}><option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Seeded Draw</option><option>Groups → Reverse Crossover</option><option>Singles</option><option>Doubles</option><option>Teams</option><option>Custom</option></select></label>
       <label>Rules<select value={f.rules} onChange={e=>setF({...f,rules:e.target.value})}><option>CNZ Rules</option><option>International Rules</option><option>Custom</option></select></label>
       <label>Default race length<select value={f.default_race_to} onChange={e=>setF({...f,default_race_to:Number(e.target.value)})}>{[1,2,3,5,7,9].map(n=><option key={n} value={n}>Race to {n}</option>)}</select></label>
       <div className="settingNote"><b>Each time you start it:</b> PottersMate creates a brand-new competition with these settings. No players, check-ins, matches or results are copied from the previous week.</div>
@@ -906,6 +920,7 @@ const css=`*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;ba
 .reverseCrossoverPreview>small{display:block;color:#667085;font-size:11px;margin-top:10px}
 @media(max-width:650px){.previewMatches{grid-template-columns:1fr}.previewHeader{flex-direction:column}.previewRule{white-space:normal}}
 
+.drawPreviewNote{margin-top:8px;border:1px solid #e4e7ec;border-radius:8px;padding:8px 10px;background:#f8fafc;color:#667085;font-size:12px}.drawPreviewNote strong{color:#344054}
 .bracket{display:flex;gap:18px;overflow-x:auto;padding:8px 2px 14px}
 .bracketRound{min-width:220px;flex:1}.bracketRound h4{text-align:center;margin:4px 0 12px;font-size:16px}
 .bracketMatches{display:flex;flex-direction:column;justify-content:space-around;gap:16px;height:100%}
