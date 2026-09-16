@@ -112,3 +112,16 @@ Built from V10.0.
 - Crossover is A1 vs B4, A2 vs B3, A3 vs B2, A4 vs B1; Groups C/D use the same pattern.
 - The 8 crossover matches feed a standard 8-player knockout through semi-finals and final.
 - Group standings use match wins, then frame differential, then frames for as tie-breakers.
+
+
+## V10.3 Flexible Reverse Crossover
+Built from V10.2.
+
+Reverse Crossover is now designed as a flexible format rather than a 4x4-only concept:
+- Works from the actual number of players and configured groups.
+- Reverse pairing rule: highest finishing position vs lowest finishing position, then next-highest vs next-lowest.
+- Handles uneven group sizes by using the actual available positions.
+- Detects odd/uneven crossover slots and exposes byes in the organiser preview.
+- Adds a Reverse Crossover preview so the organiser can review pairings before confirming.
+- Preserves the existing knockout progression, scoring, accessibility priority and recurring tournament features.
+- No new database tables are required for this UI enhancement.

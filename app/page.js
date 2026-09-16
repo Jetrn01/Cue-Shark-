@@ -15,6 +15,47 @@ function Modal({title, children, close}) {
   </div></div>
 }
 
+
+function ReverseCrossoverPreview({players = [], groupCount = 2}) {
+  const n = players.length;
+  const g = Math.max(2, Math.min(groupCount || 2, Math.max(2, n || 2)));
+  const groups = Array.from({length:g},()=>[]);
+  players.forEach((p,i)=>groups[i % g].push(p));
+
+  const pairGroups = [];
+  for(let i=0;i<Math.floor(g/2);i++) pairGroups.push([groups[i], groups[g-1-i]]);
+  if(g % 2) pairGroups.push([groups[Math.floor(g/2)], []]);
+
+  const matches=[];
+  pairGroups.forEach(([left,right],pi)=>{
+    const len=Math.max(left.length,right.length);
+    for(let i=0;i<len;i++){
+      const a=left[i] || null;
+      const b=right[right.length-1-i] || null;
+      if(a || b) matches.push({a,b,label:`Crossover ${pi+1}.${i+1}`});
+    }
+  });
+
+  return <div className="reverseCrossoverPreview">
+    <div className="previewHeader">
+      <div><strong>Reverse Crossover Preview</strong>
+        <span>{n} players · {g} groups · {matches.filter(m=>m.a&&m.b).length} matches · {matches.filter(m=>!m.a||!m.b).length} bye{matches.filter(m=>!m.a||!m.b).length===1?'':'s'}</span>
+      </div>
+      <span className="previewRule">1st vs last · 2nd vs second-last</span>
+    </div>
+    <div className="previewMatches">
+      {matches.map((m,i)=><div className={`previewMatch ${(!m.a||!m.b)?'hasBye':''}`} key={i}>
+        <strong>{i+1}</strong>
+        <span>{m.a?.name || m.a?.full_name || 'BYE'}</span>
+        <b>vs</b>
+        <span>{m.b?.name || m.b?.full_name || 'BYE'}</span>
+        {(!m.a||!m.b)&&<em>BYE</em>}
+      </div>)}
+    </div>
+    <small>Preview only — the organiser confirms the crossover after group standings are final.</small>
+  </div>
+}
+
 export default function Home() {
   const [session,setSession]=useState(null), [mode,setMode]=useState('login');
   const [email,setEmail]=useState(''),[password,setPassword]=useState(''),[authMsg,setAuthMsg]=useState('');
@@ -853,6 +894,18 @@ const css=`*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;ba
 .statusPill.available{background:#fff}.statusPill.occupied{background:#f5f5f5}.statusPill.unavailable{background:#eee}
 .waitingPanel,.resultsPanel{margin-top:20px;border-top:1px solid #edf0f4;padding-top:15px}.waitingList,.resultsList{border:1px solid #e3e7ee;border-radius:12px;overflow:hidden}.waitingItem,.resultItem{display:flex;justify-content:space-between;gap:12px;padding:11px 13px;border-top:1px solid #edf0f4;background:#fff}.waitingItem:first-child,.resultItem:first-child{border-top:0}.waitingItem span,.resultItem span{color:#667085;font-size:13px}.resultItem>div{display:flex;flex-direction:column;gap:3px}.resultScore{text-align:right}.resultScore span{font-size:12px}
 .templateIntro{background:#f7f8fb;border:1px solid #e3e7ee;border-radius:10px;padding:12px;margin-bottom:12px}.templateIntro strong,.templateIntro span{display:block}.templateIntro span{color:#667085;font-size:13px;margin-top:4px}.templateCard{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:13px 0;border-top:1px solid #edf0f4}.templateCard>div:first-child strong,.templateCard>div:first-child span,.templateCard>div:first-child small{display:block}.templateCard span,.templateCard small{color:#667085;margin-top:4px}.templateCard small{font-size:12px}.templateCard .actions{justify-content:flex-end}@media(max-width:700px){.templateCard{flex-direction:column;align-items:flex-start}.templateCard .actions{width:100%;justify-content:flex-start}}
+
+.reverseCrossoverPreview{margin:16px 0;border:1px solid #dfe4ec;border-radius:14px;padding:15px;background:#fafbfc}
+.previewHeader{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:11px}
+.previewHeader strong{display:block}.previewHeader span{display:block;color:#667085;font-size:12px;margin-top:4px}
+.previewRule{font-size:11px!important;font-weight:800;color:#475467!important;background:#fff;border:1px solid #d0d5dd;border-radius:999px;padding:5px 8px;white-space:nowrap}
+.previewMatches{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
+.previewMatch{display:grid;grid-template-columns:25px minmax(0,1fr) 24px minmax(0,1fr);gap:6px;align-items:center;padding:9px;border:1px solid #e4e7ec;border-radius:9px;background:#fff;font-size:13px}
+.previewMatch>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.previewMatch b{text-align:center;color:#667085;font-size:11px}.previewMatch em{grid-column:4;font-size:10px;font-style:normal;font-weight:800;color:#b54708}
+.previewMatch.hasBye{background:#fffaf0}
+.reverseCrossoverPreview>small{display:block;color:#667085;font-size:11px;margin-top:10px}
+@media(max-width:650px){.previewMatches{grid-template-columns:1fr}.previewHeader{flex-direction:column}.previewRule{white-space:normal}}
+
 .bracket{display:flex;gap:18px;overflow-x:auto;padding:8px 2px 14px}
 .bracketRound{min-width:220px;flex:1}.bracketRound h4{text-align:center;margin:4px 0 12px;font-size:16px}
 .bracketMatches{display:flex;flex-direction:column;justify-content:space-around;gap:16px;height:100%}
