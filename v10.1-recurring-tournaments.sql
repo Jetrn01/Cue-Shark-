@@ -29,3 +29,7 @@ create index if not exists competition_templates_organiser_idx
 -- No existing competitions, players, draws or results are changed.
 -- Starting a recurring template creates a fresh row in public.competitions;
 -- players/check-ins/matches/results are intentionally not copied.
+
+-- V10.2: group-stage support for 4 groups of 4 + reverse crossover.
+alter table public.competition_matches add column if not exists group_name text;
+create index if not exists competition_matches_group_idx on public.competition_matches(competition_id, group_name, round_number);

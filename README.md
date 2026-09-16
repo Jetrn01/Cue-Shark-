@@ -104,3 +104,11 @@ Built from V10.0.
 - Edit or remove recurring templates.
 - Match list now displays scheduled matches as "Ready to play" rather than the internal status value.
 - SQL migration: `v10.1-recurring-tournaments.sql`
+
+## V10.2 Group Stage — Reverse Crossover
+- New draw type: exactly 16 checked-in players split into Groups A-D, 4 players each.
+- Group stage creates 6 round-robin matches per group (24 total).
+- After all 24 group matches are completed, organiser can generate the reverse crossover.
+- Crossover is A1 vs B4, A2 vs B3, A3 vs B2, A4 vs B1; Groups C/D use the same pattern.
+- The 8 crossover matches feed a standard 8-player knockout through semi-finals and final.
+- Group standings use match wins, then frame differential, then frames for as tie-breakers.

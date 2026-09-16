@@ -22,7 +22,7 @@ export default function Home() {
   const [templates,setTemplates]=useState([]);
   const [players,setPlayers]=useState([]),[tables,setTables]=useState([]),[matches,setMatches]=useState([]);
   const [modal,setModal]=useState(null),[msg,setMsg]=useState('');
-  const [drawSettings,setDrawSettings]=useState({type:'Knockout',race_to:3});
+  const [drawSettings,setDrawSettings]=useState({type:'Knockout',race_to:3,group_count:4});
   const [qrData,setQrData]=useState(null);
   const [playerDB,setPlayerDB]=useState([]);
 
@@ -343,6 +343,71 @@ export default function Home() {
     await load(selected);setModal(null);setMsg(`${settings.type} draw created for ${ordered.length} players.`);
   }
 
+  async function generateGroupsReverseCrossover(settings=drawSettings){
+    if(!selected)return;
+    const checkedPlayers=players.filter(p=>p.checked_in).map(p=>p.player_id).filter(Boolean);
+    const groupCount=Number(settings.group_count||4);
+    if(checkedPlayers.length!==16 || groupCount!==4){setMsg('This format requires exactly 16 checked-in players: 4 groups of 4.');return;}
+    if(matches.length){
+      if(matches.some(m=>['completed','in_progress','active'].includes(m.status))){setMsg('This competition already has matches in progress or completed. A new draw cannot replace them.');return;}
+      if(!window.confirm('Replace the existing draw? This removes the current scheduled matches and creates the group-stage draw.'))return;
+      const {error}=await supabase.from('competition_matches').delete().eq('competition_id',selected.id);
+      if(error){setMsg(error.message);return;}
+    }
+    const race=Number(settings.race_to||selected.default_race_to||3);
+    const groups=[[],[],[],[]];
+    checkedPlayers.forEach((id,i)=>groups[i%4].push(id));
+    const rows=[]; let n=1;
+    groups.forEach((group,gi)=>{
+      for(let i=0;i<4;i++) for(let j=i+1;j<4;j++) rows.push({competition_id:selected.id,match_number:n++,round_number:1,group_name:String.fromCharCode(65+gi),player1_id:group[i],player2_id:group[j],race_to:race,status:'scheduled',score1:0,score2:0,table_id:null});
+    });
+    const {error}=await supabase.from('competition_matches').insert(rows);
+    if(error){setMsg(`Could not create group draw: ${error.message}`);return;}
+    await load(selected);setModal(null);setMsg('4 groups of 4 created. Complete the group stage, then use Generate Reverse Crossover.');
+  }
+
+  async function generateReverseCrossover(){
+    if(!selected)return;
+    const groupMatches=matches.filter(m=>m.round_number===1 && m.group_name);
+    if(groupMatches.length!==24 || groupMatches.some(m=>m.status!=='completed')){setMsg('Complete all 24 group-stage matches before generating the reverse crossover.');return;}
+    const standings={A:{},B:{},C:{},D:{}};
+    for(const m of groupMatches){
+      if(!m.winner_id)continue;
+      const group=standings[m.group_name];
+      for(const id of [m.player1_id,m.player2_id]){if(!group[id])group[id]={id,wins:0,for:0,against:0};}
+      group[m.winner_id].wins++;
+      group[m.player1_id].for+=Number(m.score1||0); group[m.player1_id].against+=Number(m.score2||0);
+      group[m.player2_id].for+=Number(m.score2||0); group[m.player2_id].against+=Number(m.score1||0);
+    }
+    const ranked={};
+    for(const g of ['A','B','C','D']){
+      const vals=Object.values(standings[g]);
+      if(vals.length!==4){setMsg(`Could not calculate Group ${g} standings.`);return;}
+      vals.sort((a,b)=>b.wins-a.wins || (b.for-b.against)-(a.for-a.against) || b.for-a.for || a.id.localeCompare(b.id));
+      ranked[g]=vals;
+    }
+    const pairs=[['A','B'],['C','D']];
+    const all=[];let n=Math.max(...matches.map(m=>m.match_number||0))+1;let matchNo=n;
+    for(const [g1,g2] of pairs){
+      for(let pos=0;pos<4;pos++){
+        const p1=ranked[g1][pos].id,p2=ranked[g2][3-pos].id;
+        all.push({competition_id:selected.id,match_number:matchNo++,round_number:2,group_name:null,player1_id:p1,player2_id:p2,race_to:Number(selected.default_race_to||3),status:'scheduled',score1:0,score2:0,table_id:null});
+      }
+    }
+    // Link the 8 reverse-crossover matches into a standard 8->4->2->1 knockout.
+    let prev=all.slice(0,8); const rounds=[prev];
+    for(let r=3;r<=5;r++){
+      const cur=[];for(let i=0;i<prev.length/2;i++){
+        const row={id:crypto.randomUUID(),competition_id:selected.id,match_number:matchNo++,round_number:r,group_name:null,player1_id:null,player2_id:null,race_to:Number(selected.default_race_to||3),status:'waiting',score1:0,score2:0,table_id:null,next_match_id:null,next_slot:null,winner_id:null,loser_id:null};cur.push(row);}
+      rounds.push(cur);prev=cur;
+    }
+    for(let r=0;r<rounds.length-1;r++) for(let i=0;i<rounds[r].length;i++){rounds[r][i].next_match_id=rounds[r+1][Math.floor(i/2)].id;rounds[r][i].next_slot=(i%2)+1;}
+    // Give the round-2 matches stable ids and keep them scheduled.
+    const {error}=await supabase.from('competition_matches').insert([...all,...rounds.slice(1).flat()]);
+    if(error){setMsg(`Could not create reverse crossover: ${error.message}`);return;}
+    await load(selected);setMsg('Reverse crossover created: A1 vs B4, A2 vs B3, A3 vs B2, A4 vs B1; C/D follow the same pattern.');
+  }
+
   async function generateKnockout(){
     if(!selected)return;
     if((selected.format||'').toLowerCase()!=='knockout'){
@@ -594,10 +659,11 @@ export default function Home() {
   <Panel title="Matches & Table Assignment">
     <div className="drawTools">
       <button className="primary" onClick={()=>setModal({type:'draw'})}>🎱 {matches.length?'Edit / Regenerate Draw':'Create Draw'}</button>
+      {matches.some(m=>m.group_name)&&matches.filter(m=>m.group_name).length===24&&matches.filter(m=>m.group_name).every(m=>m.status==='completed')&&<button onClick={generateReverseCrossover}>🏆 Generate Reverse Crossover</button>}
       {matches.length===0&&<p className="muted">No matches created yet.</p>}
     </div>
     {matches.map(m=><div className="row" key={m.id}>
-      <div><b>Match {m.match_number} · Round {m.round_number}</b><small>
+      <div><b>Match {m.match_number} · {m.group_name?`Group ${m.group_name} · `:''}Round {m.round_number}</b><small>
         {playerName(m.player1_id)} vs {playerName(m.player2_id)} · Race to {m.race_to} · {matchStatusLabel(m)}
         {m.status==='completed' && <> · <strong>Result: {m.score1 ?? 0} – {m.score2 ?? 0}</strong>{m.winner_id ? <> · Winner: {playerName(m.winner_id)}</> : null}{Number(m.race_to)===1 && m.winner_balls !== null && m.winner_balls !== undefined ? <> · {m.winner_balls} balls remaining</> : null}</>}
         {m.status==='bye' && m.winner_id && <> · <strong>Bye: {playerName(m.winner_id)} advances</strong></>}
@@ -631,7 +697,7 @@ function DrawModal({selected,players,settings,setSettings,close,generate}){
   return <Modal title="Draw Builder" close={close}>
     <p className="muted"><b>{checked}</b> checked-in players.</p>
     <label>Draw type<select value={settings.type} onChange={e=>setSettings({...settings,type:e.target.value})}>
-      <option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Seeded Draw</option>
+      <option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Seeded Draw</option><option>4 Groups of 4 → Reverse Crossover</option>
     </select></label>
     <label>Race length<select value={settings.race_to} onChange={e=>setSettings({...settings,race_to:Number(e.target.value)})}>
       {[1,2,3,5,7,9].map(n=><option key={n} value={n}>Race to {n}</option>)}
@@ -641,8 +707,9 @@ function DrawModal({selected,players,settings,setSettings,close,generate}){
       {settings.type==='Round Robin'&&'Every checked-in player plays every other player once.'}
       {settings.type==='Random Draw'&&'Players are shuffled before the knockout draw.'}
       {settings.type==='Seeded Draw'&&'Players stay in their current checked-in order as the seed order.'}
+      {settings.type==='4 Groups of 4 → Reverse Crossover'&&'Exactly 16 players: 4 groups of 4, then A1 vs B4, A2 vs B3, A3 vs B2, A4 vs B1; C/D follow the same pattern.'}
     </div>
-    <div className="ma"><button type="button" onClick={close}>Cancel</button><button className="primary" disabled={checked<2} onClick={()=>generate(settings)}>Generate Draw</button></div>
+    <div className="ma"><button type="button" onClick={close}>Cancel</button><button className="primary" disabled={checked<2 || (settings.type==='4 Groups of 4 → Reverse Crossover' && checked!==16)} onClick={()=>settings.type==='4 Groups of 4 → Reverse Crossover'?generateGroupsReverseCrossover(settings):generate(settings)}>Generate Draw</button></div>
   </Modal>
 }
 
@@ -718,7 +785,7 @@ function CompetitionModal({c,close,save}){
       <label>Venue<input value={f.venue} onChange={e=>setF({...f,venue:e.target.value})}/></label>
       <label>Date<input type="date" value={f.start_date||''} onChange={e=>setF({...f,start_date:e.target.value})}/></label>
       <label>Format<select value={f.format} onChange={e=>setF({...f,format:e.target.value})}>
-        <option>Singles</option><option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Seeded Draw</option><option>Doubles</option><option>Teams</option><option>Custom</option>
+        <option>Singles</option><option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Seeded Draw</option><option>4 Groups of 4 → Reverse Crossover</option><option>Doubles</option><option>Teams</option><option>Custom</option>
       </select></label>
       <label>Rules<select value={f.rules} onChange={e=>setF({...f,rules:e.target.value})}><option>CNZ Rules</option><option>International Rules</option><option>Custom</option></select></label>
       <label>Default race length<select value={f.default_race_to} onChange={e=>setF({...f,default_race_to:Number(e.target.value)})}>{[1,2,3,5,7,9].map(n=><option key={n} value={n}>Race to {n}</option>)}</select></label>
@@ -748,7 +815,7 @@ function TemplateModal({t,close,save}){
       <label>Tournament name<input required value={f.name} placeholder="Thursday Night 8-Ball" onChange={e=>setF({...f,name:e.target.value})}/></label>
       <label>Venue<input value={f.venue} placeholder="Cambridge Cossie Club" onChange={e=>setF({...f,venue:e.target.value})}/></label>
       <label>Repeats every<select value={f.day_of_week} onChange={e=>setF({...f,day_of_week:Number(e.target.value)})}>{['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'].map((d,i)=><option key={d} value={i}>{d}</option>)}</select></label>
-      <label>Format<select value={f.format} onChange={e=>setF({...f,format:e.target.value})}><option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Seeded Draw</option><option>Singles</option><option>Doubles</option><option>Teams</option><option>Custom</option></select></label>
+      <label>Format<select value={f.format} onChange={e=>setF({...f,format:e.target.value})}><option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Seeded Draw</option><option>4 Groups of 4 → Reverse Crossover</option><option>Singles</option><option>Doubles</option><option>Teams</option><option>Custom</option></select></label>
       <label>Rules<select value={f.rules} onChange={e=>setF({...f,rules:e.target.value})}><option>CNZ Rules</option><option>International Rules</option><option>Custom</option></select></label>
       <label>Default race length<select value={f.default_race_to} onChange={e=>setF({...f,default_race_to:Number(e.target.value)})}>{[1,2,3,5,7,9].map(n=><option key={n} value={n}>Race to {n}</option>)}</select></label>
       <div className="settingNote"><b>Each time you start it:</b> PottersMate creates a brand-new competition with these settings. No players, check-ins, matches or results are copied from the previous week.</div>
