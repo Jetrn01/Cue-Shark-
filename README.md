@@ -1,7 +1,10 @@
-# PottersMate V6 — corrected
+# PottersMate V6 — QR / live scoring corrected
 
-This build preserves the existing V5 database field names (`start_date`, `first_name`, `last_name`, `email`, `club_name`) and adds V6 organiser player editing/removal, table management, accessibility fields, and match-to-table assignment.
+This build fixes the QR scoring page compilation error and uses secure Supabase RPC functions for public table scoring.
 
-Run `v6.sql` once in Supabase, then replace the GitHub repository contents and let Vercel deploy.
+1. Run `v6.sql` if you have not already.
+2. Run `v6-qr.sql` once in Supabase.
+3. Replace the GitHub repository files and commit to main.
+4. Vercel will deploy using Next.js 15.5.24.
 
-Next.js is pinned to 15.5.24 to avoid the vulnerable 15.3.3 release.
+The public scoring route is `/score/[table-token]`. The permanent table token belongs to the physical table; the current match is resolved from the table assignment.
