@@ -51,3 +51,7 @@ Fixes organiser match-list display so completed results show score, winner, and 
 
 ## V9.0
 Adds a visual knockout bracket and a tournament control panel. The existing public scoring RPC advances a completed knockout winner into the linked next match/slot; V9.0 makes that progression visible to the organiser.
+
+
+## V9.1
+Adds live tournament-day control: organiser data refreshes every 5 seconds while a competition is open, table cards show current match and score, ready matches are queued with quick table assignment, and an "Assign next ready" action fills available tables.

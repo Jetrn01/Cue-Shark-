@@ -30,6 +30,12 @@ export default function Home() {
   useEffect(()=>{if(session) loadCompetitions()},[session]);
   useEffect(()=>{if(session) loadPlayerDB()},[session]);
 
+  useEffect(()=>{
+    if(!session || !selected) return;
+    const timer=setInterval(()=>load(selected),5000);
+    return()=>clearInterval(timer);
+  },[session,selected]);
+
   async function loadPlayerDB(){const {data,error}=await supabase.from('players').select('id,first_name,last_name,display_name,phone,email,club_name').order('display_name',{ascending:true});if(error)setMsg(error.message);else setPlayerDB(data||[])}
 
   async function loadCompetitions(){const {data,error}=await supabase.from('competitions').select('*').order('start_date',{ascending:true}); if(error)setMsg(error.message);else setCompetitions(data||[])}
@@ -150,6 +156,29 @@ export default function Home() {
     if(id)await supabase.from('tournament_tables').update({status:'occupied'}).eq('id',id);
     const r=await supabase.from('competition_matches').update({table_id:id||null}).eq('id',m.id);
     if(r.error)setMsg(r.error.message);else load(selected)
+  }
+
+  async function quickAssign(m,t){
+    if(!m || !t || t.status==='unavailable' || m.status!=='scheduled') return;
+    await assign(m,t.id);
+    setMsg(`Match ${m.match_number} assigned to Table ${t.table_number}.`);
+  }
+
+  async function assignNextReady(){
+    const ready=matches.filter(m=>m.status==='scheduled' && !m.table_id);
+    const free=tables.filter(t=>t.status==='available');
+    if(!ready.length){setMsg('There are no unassigned matches ready to play.');return;}
+    if(!free.length){setMsg('There are no available tables.');return;}
+    const count=Math.min(ready.length,free.length);
+    for(let i=0;i<count;i++){
+      const m=ready[i], t=free[i];
+      const r=await supabase.from('competition_matches').update({table_id:t.id}).eq('id',m.id);
+      if(r.error){setMsg(r.error.message);return;}
+      const tr=await supabase.from('tournament_tables').update({status:'occupied'}).eq('id',t.id);
+      if(tr.error){setMsg(tr.error.message);return;}
+    }
+    await load(selected);
+    setMsg(`${count} ready match${count===1?'':'es'} assigned to available table${count===1?'':'s'}.`);
   }
   function playerName(id){
     const p=players.find(x=>x.player_id===id)?.players;
@@ -319,16 +348,52 @@ export default function Home() {
   }
 
   function TournamentControl({tables,matches,playerName}){
-    return <div className="controlGrid">
-      {tables.length===0 ? <p className="muted">Add tables to see tournament control.</p> :
-        tables.map(t=>{
-          const active=matches.find(m=>m.table_id===t.id && m.status!=='completed');
-          return <div className="controlCard" key={t.id}>
-            <div className="controlTop"><strong>Table {t.table_number}</strong><span className={`statusPill ${t.status||'available'}`}>{active ? matchStatusLabel(active) : (t.status||'available')}</span></div>
-            {active ? <><div className="controlMatch">Match {active.match_number}</div><div>{playerName(active.player1_id)} <b>vs</b> {playerName(active.player2_id)}</div><small>Race to {active.race_to}</small></> : <div className="controlEmpty">No match assigned</div>}
+    const activeMatches=matches.filter(m=>m.table_id && m.status!=='completed');
+    const ready=matches.filter(m=>m.status==='scheduled' && !m.table_id);
+    const available=tables.filter(t=>t.status==='available');
+    return <div>
+      <div className="controlSummary">
+        <div><strong>{activeMatches.length}</strong><span>Playing / assigned</span></div>
+        <div><strong>{ready.length}</strong><span>Ready to play</span></div>
+        <div><strong>{available.length}</strong><span>Available tables</span></div>
+        <button onClick={()=>load(selected)}>↻ Refresh now</button>
+        <button className="primary" onClick={assignNextReady}>⚡ Assign next ready</button>
+      </div>
+
+      <div className="controlGrid">
+        {tables.length===0 ? <p className="muted">Add tables to see tournament control.</p> :
+          tables.map(t=>{
+            const active=matches.find(m=>m.table_id===t.id && m.status!=='completed');
+            return <div className="controlCard" key={t.id}>
+              <div className="controlTop">
+                <strong>Table {t.table_number}{t.is_accessible?' ♿':''}</strong>
+                <span className={`statusPill ${active?'occupied':(t.status||'available')}`}>{active ? matchStatusLabel(active) : (t.status||'available')}</span>
+              </div>
+              {active ? <div>
+                <div className="controlMatch">Match {active.match_number}</div>
+                <div>{playerName(active.player1_id)} <b>vs</b> {playerName(active.player2_id)}</div>
+                <small>Race to {active.race_to} · Score {active.score1??0}–{active.score2??0}</small>
+                <a className="scoreLink controlScore" href={`/score/${t.table_token||t.id}`} target="_blank" rel="noreferrer">📱 Open scoring</a>
+              </div> :
+              <div className="controlEmpty">{t.status==='unavailable'?'Unavailable':'No match assigned'}</div>}
+            </div>
+          })
+        }
+      </div>
+
+      {ready.length>0 && <div className="readyQueue">
+        <h4>Ready to play</h4>
+        {ready.map(m=><div className="readyRow" key={m.id}>
+          <div><strong>Match {m.match_number}</strong><span>{playerName(m.player1_id)} vs {playerName(m.player2_id)} · Race to {m.race_to}</span></div>
+          <div className="actions">
+            {available[0] && <button onClick={()=>quickAssign(m,available[0])}>Assign Table {available[0].table_number}</button>}
+            <select defaultValue="" onChange={e=>{if(e.target.value){const t=tables.find(x=>x.id===e.target.value);quickAssign(m,t)}}}>
+              <option value="">Choose table…</option>
+              {available.map(t=><option key={t.id} value={t.id}>Table {t.table_number}{t.is_accessible?' ♿':''}</option>)}
+            </select>
           </div>
-        })
-      }
+        </div>)}
+      </div>}
     </div>
   }
 
@@ -489,6 +554,14 @@ function CompetitionModal({c,close,save}){
 function TableModal({t,close,save}){const[f,setF]=useState({table_number:t?.table_number||'',table_type:t?.table_type||'Standard',notes:t?.notes||'',is_accessible:!!t?.is_accessible,status:t?.status||'available'});return <Modal title={t?'Edit table':'Add table'} close={close}><form onSubmit={e=>{e.preventDefault();save(f,t)}}><label>Table number<input required type="number" min="1" value={f.table_number} onChange={e=>setF({...f,table_number:e.target.value})}/></label><label>Table type<select value={f.table_type} onChange={e=>setF({...f,table_type:e.target.value})}><option>Standard</option><option>Accessible</option><option>Reserved / Unavailable</option></select></label><label className="check"><input type="checkbox" checked={f.is_accessible} onChange={e=>setF({...f,is_accessible:e.target.checked})}/> Accessible table ♿</label><label>Table notes<textarea value={f.notes} onChange={e=>setF({...f,notes:e.target.value})}/></label><div className="ma"><button type="button" onClick={close}>Cancel</button><button className="primary">Save</button></div></form></Modal>}
 
 const css=`*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:#f5f7fa;color:#172033}button,input,select,textarea{font:inherit}button{cursor:pointer;border:1px solid #d8dee8;background:#fff;border-radius:8px;padding:9px 12px}.primary{background:#172033;color:#fff;border-color:#172033}.danger{color:#b42318}.link{border:0;background:none;color:#315fdb}.auth{min-height:100vh;display:grid;place-items:center}.card{background:#fff;padding:36px;border-radius:18px;box-shadow:0 12px 40px #0001;width:min(430px,92vw)}.card form{display:grid;gap:12px}.card input{padding:12px;border:1px solid #ccd3df;border-radius:8px}.error{color:#b42318}header{background:#fff;border-bottom:1px solid #e4e8ef;padding:15px 24px;display:flex;justify-content:space-between;align-items:center}header h1{margin:0;font-size:25px}.layout{display:grid;grid-template-columns:260px 1fr;max-width:1400px;margin:auto;min-height:calc(100vh - 72px)}aside{background:#fff;border-right:1px solid #e4e8ef;padding:15px}.asideTitle{display:flex;flex-direction:column;gap:10px;margin-bottom:10px}.createBtn{width:100%;font-weight:700}aside button{display:block;width:100%;text-align:left;border:0;margin-top:6px}aside small{display:block;color:#758096;margin-top:4px}.sel{background:#eef2ff}.content{padding:22px;max-width:1100px}.hero{background:#fff;border:1px solid #e3e7ee;border-radius:14px;padding:20px;display:flex;justify-content:space-between;margin-bottom:18px}.hero h2{margin:0 0 6px}.hero p{margin:0;color:#6a7587}.heroRight{display:flex;flex-direction:column;align-items:flex-end;gap:12px}.settingsSummary{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px;color:#667085;font-size:13px}.settingsSummary span{background:#f5f7fa;padding:7px 9px;border-radius:7px}.dbTop{display:flex;gap:8px;margin-bottom:10px}.dbTop input{flex:1}.dbList{max-height:55vh;overflow:auto}.settingNote{background:#f5f7fa;border:1px solid #e3e7ee;border-radius:8px;padding:10px;color:#667085;font-size:13px;line-height:1.4}.stats{display:flex;gap:15px;align-items:center;flex-wrap:wrap}.stats b{background:#f5f7fa;padding:10px 12px;border-radius:8px}.panel{background:#fff;border:1px solid #e3e7ee;border-radius:14px;margin-bottom:18px;padding:16px}.ph{display:flex;justify-content:space-between;align-items:center}.ph h3{margin:0}.row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid #edf0f4}.row small{display:block;color:#707b8d;margin-top:4px}.actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap}.qr{border:1px dashed #aab3c2;border-radius:6px;padding:8px;text-align:center;font-size:11px}.qrLarge{display:flex;justify-content:center;align-items:center;padding:8px}.qrLarge img{width:320px;height:320px;max-width:100%;image-rendering:auto}.scoreLink{padding:9px 12px;border:1px solid #d8dee8;border-radius:8px;text-decoration:none;color:#172033;background:#fff}.muted{color:#778194}.drawTools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}.empty{padding:70px 30px}.notice{margin:14px auto;padding:10px 14px;background:#fff4e5;border:1px solid #ffd7a3;width:94%;border-radius:8px}.notice button{float:right;padding:2px 7px}.backdrop{position:fixed;inset:0;background:#0006;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:18px}.modal{background:#fff;width:min(520px,95vw);max-height:calc(100vh - 36px);overflow-y:auto;border-radius:14px;padding:18px;margin:auto 0}.mh{display:flex;justify-content:space-between;align-items:center}.modal form{display:grid;gap:12px}.modal label{display:grid;gap:5px;font-weight:600}.modal input,.modal select,.modal textarea{padding:10px;border:1px solid #ccd3df;border-radius:8px}.modal textarea{min-height:80px}.check{display:flex!important;align-items:center;gap:8px}.ma{display:flex;justify-content:flex-end;gap:8px}@media(max-width:850px){.heroRight{align-items:flex-start;margin-top:15px}.layout{grid-template-columns:1fr}aside{border-right:0;border-bottom:1px solid #e4e8ef}.hero{display:block}.row{flex-direction:column;align-items:flex-start}.actions{width:100%}}
+.controlSummary{display:flex;gap:10px;align-items:stretch;flex-wrap:wrap;margin:10px 0 14px}
+.controlSummary>div{border:1px solid #dfe4ec;border-radius:12px;background:#fafbfc;padding:10px 14px;min-width:145px}
+.controlSummary strong{display:block;font-size:22px}.controlSummary span{display:block;color:#667085;font-size:12px;margin-top:3px}
+.controlSummary button{align-self:center}.readyQueue{margin-top:18px;border-top:1px solid #edf0f4;padding-top:14px}.readyQueue h4{margin:0 0 10px}
+.readyRow{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:11px 0;border-top:1px solid #edf0f4}
+.readyRow:first-of-type{border-top:0}.readyRow span{display:block;color:#667085;margin-top:4px}
+.controlScore{display:inline-block;margin-top:10px}
+@media(max-width:700px){.readyRow{flex-direction:column;align-items:flex-start}.controlSummary>div{min-width:125px}}
 .controlGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
 .controlCard{border:1px solid #dfe4ec;border-radius:14px;padding:16px;background:#fafbfc}
 .controlTop{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
