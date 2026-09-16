@@ -6,4 +6,4 @@ No additional SQL is required if the V6 QR SQL/functions have already been insta
 
 
 ## V6.7
-Adds organiser-controlled competition deletion with a confirmation prompt.
+Adds a Delete competition button with confirmation and refreshes the organiser dashboard after deletion.
