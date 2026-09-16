@@ -25,15 +25,25 @@ export default function ScorePage() {
     setLoading(true);
     setError('');
 
-    const { data: result, error: rpcError } = await supabase.rpc(
+    const { data: rawResult, error: rpcError } = await supabase.rpc(
       'get_table_score',
-      { p_token: tableToken }
+      { p_token: String(tableToken) }
     );
 
     if (rpcError) {
       setData(null);
       setError(rpcError.message);
-    } else if (!result || !result.match_id) {
+      setLoading(false);
+      return;
+    }
+
+    let result = rawResult;
+    if (Array.isArray(result)) result = result[0] || null;
+    if (typeof result === 'string') {
+      try { result = JSON.parse(result); } catch (_) {}
+    }
+
+    if (!result || !result.match_id) {
       setData(result || null);
       setError('No current match is assigned to this table');
     } else {
@@ -49,17 +59,25 @@ export default function ScorePage() {
     setBusy(true);
     setError('');
 
-    const { data: updated, error: rpcError } = await supabase.rpc(
+    const { data: rawUpdated, error: rpcError } = await supabase.rpc(
       'record_table_score',
-      { p_token: token, p_player: player }
+      { p_token: String(token), p_player: player }
     );
 
     if (rpcError) {
       setError(rpcError.message);
-    } else if (updated?.match_id) {
-      setData(updated);
     } else {
-      setError('The score was not returned. Please refresh.');
+      let updated = rawUpdated;
+      if (Array.isArray(updated)) updated = updated[0] || null;
+      if (typeof updated === 'string') {
+        try { updated = JSON.parse(updated); } catch (_) {}
+      }
+
+      if (updated?.match_id) {
+        setData(updated);
+      } else {
+        setError('The score was not returned. Please refresh.');
+      }
     }
 
     setBusy(false);
@@ -95,7 +113,7 @@ export default function ScorePage() {
             TABLE {data?.table_number || ''}{data?.is_accessible ? ' ♿' : ''}
           </div>
           <div className="card empty">
-            <h1>No current match</h1>
+            <h1>{error && error !== 'No current match is assigned to this table' ? 'Scoring connection error' : 'No current match'}</h1>
             <p>{error || 'The organiser has not assigned a current match to this table yet.'}</p>
             <button className="secondary" onClick={() => load(token)}>↻ Refresh</button>
           </div>

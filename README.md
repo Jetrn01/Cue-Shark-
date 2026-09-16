@@ -1,5 +1,5 @@
-# PottersMate V6.1 — Live scoring
+# PottersMate V6.2 — QR scoring final fix
 
-This build fixes the mobile scoring page so it uses the exact current match returned by the table scoring RPC, displays the real player names and race length, records frames against the current match, and completes the match at the race target.
+This build normalises the Supabase JSONB RPC response so the scoring page works whether the client returns the JSON value as an object, string, or single-item array.
 
 No additional SQL is required if the V6 QR SQL/functions are already installed.
