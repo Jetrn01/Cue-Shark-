@@ -26,7 +26,7 @@ export default function ScorePage() {
     setError('');
 
     const { data: rawResult, error: rpcError } = await supabase.rpc(
-      'get_table_score',
+      'get_public_table_match',
       { p_token: String(tableToken) }
     );
 
@@ -59,9 +59,12 @@ export default function ScorePage() {
     setBusy(true);
     setError('');
 
+    const nextScore1 = score1 + (player === 1 ? 1 : 0);
+    const nextScore2 = score2 + (player === 2 ? 1 : 0);
+
     const { data: rawUpdated, error: rpcError } = await supabase.rpc(
-      'record_table_score',
-      { p_token: String(token), p_player: player }
+      'submit_public_score',
+      { p_token: String(token), p_score1: nextScore1, p_score2: nextScore2 }
     );
 
     if (rpcError) {
