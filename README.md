@@ -58,3 +58,10 @@ Adds live tournament-day control: organiser data refreshes every 5 seconds while
 
 ## V9.2
 Adds a player-directory setting for Requires accessible table. Matches containing a player with this setting can only be assigned to accessible tables; automatic assignment respects the requirement.
+
+
+## V9.3 accessibility-priority assignment
+- `Assign next ready` now queues matches requiring an accessible table before standard matches.
+- Accessibility-required matches can only be assigned to accessible available tables.
+- Standard matches prefer standard available tables.
+- A standard match may use a remaining accessible table only after accessibility-required ready matches have been considered.

@@ -174,19 +174,40 @@ export default function Home() {
   async function assignNextReady(){
     const ready=matches.filter(m=>m.status==='scheduled' && !m.table_id);
     const free=tables.filter(t=>t.status==='available');
+
+    // Accessibility gets priority: matches containing a player who requires
+    // an accessible table are queued before all other ready matches.
+    // This prevents a standard match from taking an accessible table when
+    // an accessibility-required match is waiting for it.
+    const needsAccessible=(m)=>[m.player1_id,m.player2_id]
+      .some(pid=>players.find(x=>x.player_id===pid)?.players?.requires_accessible_table);
+    const accessibleReady=ready.filter(needsAccessible);
+    const standardReady=ready.filter(m=>!needsAccessible(m));
+    const queue=[...accessibleReady,...standardReady];
+
     let assigned=0;
-    for(const m of ready){
-      const needs=[m.player1_id,m.player2_id].some(pid=>players.find(x=>x.player_id===pid)?.players?.requires_accessible_table);
-      const t=free.find(x=>!needs || x.is_accessible);
+    for(const m of queue){
+      const needs=needsAccessible(m);
+      // Required-access matches can ONLY use an accessible table.
+      // Standard matches prefer a standard table, but may use a remaining
+      // accessible table when no accessibility-required match needs it.
+      const t=needs
+        ? free.find(x=>x.is_accessible)
+        : free.find(x=>!x.is_accessible) || free.find(x=>x.is_accessible);
       if(!t) continue;
+
       const r=await supabase.from('competition_matches').update({table_id:t.id}).eq('id',m.id);
       if(r.error){setMsg(r.error.message);return;}
       const tr=await supabase.from('tournament_tables').update({status:'occupied'}).eq('id',t.id);
       if(tr.error){setMsg(tr.error.message);return;}
-      free.splice(free.indexOf(t),1); assigned++;
+      free.splice(free.indexOf(t),1);
+      assigned++;
     }
+
     await load(selected);
-    setMsg(assigned ? `${assigned} ready match${assigned===1?'':'es'} assigned to suitable available table${assigned===1?'':'s'}.` : 'No ready match could be assigned. Check that an accessible table is available for players who require one.');
+    setMsg(assigned
+      ? `${assigned} ready match${assigned===1?'':'es'} assigned with accessibility priority.`
+      : 'No ready match could be assigned. Check that a suitable available table is available.');
   }
 
   function playerName(id){
