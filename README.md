@@ -1,5 +1,5 @@
-# PottersMate V6.2 — QR scoring final fix
+# PottersMate V6.3 — Table QR codes
 
-This build normalises the Supabase JSONB RPC response so the scoring page works whether the client returns the JSON value as an object, string, or single-item array.
+Adds a visible "▦ QR Code" button for every table. Clicking it generates the table's permanent QR code, shows the scoring URL, and provides a printable QR card.
 
-No additional SQL is required if the V6 QR SQL/functions are already installed.
+No additional SQL is required if the V6 QR SQL/functions have already been installed.
