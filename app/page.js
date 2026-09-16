@@ -104,6 +104,16 @@ export default function Home() {
     setMsg(`${p.display_name||`${p.first_name||''} ${p.last_name||''}`.trim()} added to ${selected.name}.`);
   }
 
+  async function deleteMasterPlayer(p){
+    const name=p.display_name||`${p.first_name||''} ${p.last_name||''}`.trim()||'this player';
+    if(!window.confirm(`Delete ${name} from the player database? This removes the player record and may also remove their competition entries. This cannot be undone.`))return;
+    const {error}=await supabase.from('players').delete().eq('id',p.id);
+    if(error){setMsg(`Could not delete ${name}: ${error.message}`);return;}
+    await loadPlayerDB();
+    if(selected) await load(selected);
+    setMsg(`${name} deleted from the player database.`);
+  }
+
   async function saveMasterPlayer(f){
     const data={first_name:f.first_name.trim(),last_name:f.last_name.trim(),display_name:`${f.first_name.trim()} ${f.last_name.trim()}`.trim(),phone:f.phone.trim(),email:f.email.trim(),club_name:f.club_name.trim()};
     const r=f.playerId
@@ -306,7 +316,7 @@ export default function Home() {
   </Panel>
   </section>}</div>
   {qrData&&<QRModal data={qrData} close={()=>setQrData(null)}/>}
-  {modal?.type==='playerdb'&&<PlayerDatabaseModal players={playerDB} currentPlayers={players} close={()=>setModal(null)} add={addExistingPlayerToCompetition} edit={(p)=>setModal({type:'masterPlayer',p})} newPlayer={()=>setModal({type:'masterPlayer',p:null})}/>}
+  {modal?.type==='playerdb'&&<PlayerDatabaseModal players={playerDB} currentPlayers={players} close={()=>setModal(null)} add={addExistingPlayerToCompetition} edit={(p)=>setModal({type:'masterPlayer',p})} deletePlayer={deleteMasterPlayer} newPlayer={()=>setModal({type:'masterPlayer',p:null})}/>}
   {modal?.type==='draw'&&<DrawModal selected={selected} players={players} settings={drawSettings} setSettings={setDrawSettings} close={()=>setModal(null)} generate={generateDraw}/>}
   {modal?.type==='masterPlayer'&&<MasterPlayerModal p={modal.p} allowAdd={!!selected} close={()=>setModal(null)} save={saveMasterPlayer}/>}
   {modal?.type==='player'&&<PlayerModal p={modal.p} close={()=>setModal(null)} save={savePlayer}/>}
@@ -358,7 +368,7 @@ function QRModal({data,close}){
   </Modal>
 }
 
-function PlayerDatabaseModal({players,currentPlayers,close,add,edit,newPlayer}){
+function PlayerDatabaseModal({players,currentPlayers,close,add,edit,deletePlayer,newPlayer}){
   const [q,setQ]=useState('');
   const current=new Set(currentPlayers.map(x=>x.player_id));
   const filtered=players.filter(p=>{
@@ -372,7 +382,7 @@ function PlayerDatabaseModal({players,currentPlayers,close,add,edit,newPlayer}){
       {filtered.length===0&&<p className="muted">No players found.</p>}
       {filtered.map(p=><div className="row" key={p.id}>
         <div><b>{p.display_name||`${p.first_name||''} ${p.last_name||''}`.trim()}</b><small>{p.club_name||'No club'}{p.phone?` · ${p.phone}`:''}{p.email?` · ${p.email}`:''}</small></div>
-        <div className="actions"><button onClick={()=>edit(p)}>✏️ Edit</button>{current.has(p.id)?<button disabled>✓ In competition</button>:<button className="primary" onClick={()=>add(p)}>＋ Add</button>}</div>
+        <div className="actions"><button onClick={()=>edit(p)}>✏️ Edit</button>{current.has(p.id)?<button disabled>✓ In competition</button>:<button className="primary" onClick={()=>add(p)}>＋ Add</button>}<button className="danger" onClick={()=>deletePlayer(p)}>🗑️ Delete</button></div>
       </div>)}
     </div>
   </Modal>

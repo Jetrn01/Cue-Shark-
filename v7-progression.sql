@@ -1,3 +1,4 @@
+-- V8.3 fix: alias the UPDATE target so cm.winner_balls is a valid reference
 -- PottersMate V7 — knockout winner progression
 -- Adds bracket links and winner/loser tracking. Safe for existing matches.
 
@@ -103,13 +104,13 @@ begin
 
   completed_table_id := r.table_id;
 
-  update public.competition_matches
+  update public.competition_matches as cm
      set score1=p_score1,
          score2=p_score2,
          status=new_status,
          winner_id=case when new_status='completed' then winner else winner_id end,
          loser_id=case when new_status='completed' then loser else loser_id end,
-         winner_balls=case when new_status='completed' then recorded_balls else winner_balls end
+         winner_balls=case when new_status='completed' then recorded_balls else cm.winner_balls end
    where id=r.id;
 
   if new_status='completed' and r.next_match_id is not null and r.next_slot in (1,2) then

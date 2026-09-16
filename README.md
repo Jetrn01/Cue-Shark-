@@ -27,3 +27,19 @@ Adds a Draw Builder for Knockout, Round Robin, Random Draw and Seeded Draw, with
 
 ## V8.1
 Adds a master player database using the existing `players` table. Organisers can search players, edit records, create new players, and add existing players to a competition without re-entering their details.
+
+
+## V8.2
+Fixes the public scoring SQL error `column reference "winner_balls" is ambiguous` by qualifying the database column in the score update.
+
+
+## V8.3
+Fixes the remaining `missing FROM-clause entry for table "cm"` error by explicitly aliasing `competition_matches` as `cm` in the score update.
+
+
+## V8.4
+Adds a Delete button to the master Player Database with a confirmation prompt.
+
+
+## V8.5
+Displays completed match results in the organiser match list, including score, winner, and balls remaining for Race-to-1 matches.
