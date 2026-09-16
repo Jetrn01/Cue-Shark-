@@ -110,6 +110,7 @@ export default function Home() {
   const [competitions,setCompetitions]=useState([]),[selected,setSelected]=useState(null);
   const [templates,setTemplates]=useState([]), [seasonCompetitions,setSeasonCompetitions]=useState([]),
     [seasonMatches,setSeasonMatches]=useState([]), [pointsSettings,setPointsSettings]=useState({win:1,loss:0});
+  const [templateTables,setTemplateTables]=useState([]);
   const [players,setPlayers]=useState([]),[tables,setTables]=useState([]),[matches,setMatches]=useState([]);
   const [modal,setModal]=useState(null),[msg,setMsg]=useState('');
   const [drawSettings,setDrawSettings]=useState({type:'Knockout',race_to:3,group_count:4});
@@ -133,12 +134,17 @@ export default function Home() {
   async function loadCompetitions(){const {data,error}=await supabase.from('competitions').select('*').order('start_date',{ascending:true}); if(error)setMsg(error.message);else setCompetitions(data||[])}
   async function loadTemplates(){const {data,error}=await supabase.from('competition_templates').select('*').eq('is_active',true).order('name'); if(error)setMsg(error.message);else setTemplates(data||[])}
   async function load(c){setSelected(c);
-    const [p,m,t]=await Promise.all([
+    const [p,m,tDirect]=await Promise.all([
       supabase.from('competition_players').select('id,player_id,checked_in,players(id,first_name,last_name,display_name,phone,email,club_name,requires_accessible_table)').eq('competition_id',c.id),
       supabase.from('competition_matches').select('*').eq('competition_id',c.id).order('match_number'),
       supabase.from('tournament_tables').select('*').eq('competition_id',c.id).order('table_number')
     ]);
-    setPlayers(p.data||[]);setMatches(m.data||[]);setTables(t.data||[]);
+    let sessionTables=tDirect.data||[];
+    if(c.recurring_template_id){
+      const {data:shared,error:sharedError}=await supabase.from('tournament_tables').select('*').eq('recurring_template_id',c.recurring_template_id).order('table_number');
+      if(!sharedError && (shared||[]).length>0) sessionTables=shared||[];
+    }
+    setPlayers(p.data||[]);setMatches(m.data||[]);setTables(sessionTables);
     if(c.recurring_template_id && c.season_id){
       const {data:sc}=await supabase.from('competitions').select('*').eq('recurring_template_id',c.recurring_template_id).eq('season_id',c.season_id).order('season_week',{ascending:true});
       setSeasonCompetitions(sc||[]);
@@ -227,6 +233,9 @@ export default function Home() {
     };
     const {data:created,error}=await supabase.from('competitions').insert(data).select('*').single();
     if(error){setMsg(`Could not start tournament: ${error.message}`);return;}
+    if(created && t.id){
+      await supabase.from('tournament_tables').update({status:'available'}).eq('recurring_template_id',t.id);
+    }
     await loadCompetitions();
     if(created) await load(created);
     setModal(null);
@@ -319,10 +328,34 @@ export default function Home() {
 
   async function saveTable(f,old){let r;
     const data={table_number:Number(f.table_number),table_type:f.table_type,notes:f.notes,is_accessible:f.is_accessible,status:f.status};
-    if(old)r=await supabase.from('tournament_tables').update(data).eq('id',old.id);else r=await supabase.from('tournament_tables').insert({...data,competition_id:selected.id});
+    if(selected?.recurring_template_id){
+      if(old)r=await supabase.from('tournament_tables').update(data).eq('id',old.id).eq('recurring_template_id',selected.recurring_template_id);
+      else r=await supabase.from('tournament_tables').insert({...data,competition_id:null,recurring_template_id:selected.recurring_template_id}).select('*').single();
+    } else {
+      if(old)r=await supabase.from('tournament_tables').update(data).eq('id',old.id);else r=await supabase.from('tournament_tables').insert({...data,competition_id:selected.id});
+    }
     if(r.error)setMsg(r.error.message);else{setModal(null);load(selected)}
   }
   async function delTable(t){if(!confirm(`Delete Table ${t.table_number}?`))return;const r=await supabase.from('tournament_tables').delete().eq('id',t.id);if(r.error)setMsg(r.error.message);else load(selected)}
+  async function openTemplateTables(t){
+    const {data,error}=await supabase.from('tournament_tables').select('*').eq('recurring_template_id',t.id).order('table_number');
+    if(error){setMsg(`Could not load recurring tables: ${error.message}`);return;}
+    setTemplateTables(data||[]);setModal({type:'templateTables',t});
+  }
+  async function saveTemplateTable(f,old,t){
+    const data={table_number:Number(f.table_number),table_type:f.table_type,notes:f.notes,is_accessible:f.is_accessible,status:f.status,competition_id:null,recurring_template_id:t.id};
+    const r=old
+      ? await supabase.from('tournament_tables').update({table_number:data.table_number,table_type:data.table_type,notes:data.notes,is_accessible:data.is_accessible,status:data.status}).eq('id',old.id).eq('recurring_template_id',t.id)
+      : await supabase.from('tournament_tables').insert(data).select('*').single();
+    if(r.error){setMsg(`Could not save recurring table: ${r.error.message}`);return;}
+    const {data:rows}=await supabase.from('tournament_tables').select('*').eq('recurring_template_id',t.id).order('table_number');
+    setTemplateTables(rows||[]);setMsg(`Table ${data.table_number} saved to the recurring tournament.`);
+  }
+  async function delTemplateTable(t){
+    if(!confirm(`Delete Table ${t.table_number} from the recurring tournament?`))return;
+    const {error}=await supabase.from('tournament_tables').delete().eq('id',t.id).eq('recurring_template_id',t.recurring_template_id);
+    if(error)setMsg(error.message);else{setTemplateTables(prev=>prev.filter(x=>x.id!==t.id));setMsg(`Table ${t.table_number} removed from the recurring tournament.`)}
+  }
   async function assign(m,id){
     if(id){
       const t=tables.find(x=>x.id===id);
@@ -846,8 +879,10 @@ export default function Home() {
   {modal?.type==='player'&&<PlayerModal p={modal.p} close={()=>setModal(null)} save={savePlayer}/>}
   {modal?.type==='table'&&<TableModal t={modal.t} close={()=>setModal(null)} save={saveTable}/>}
   {modal?.type==='competition'&&<CompetitionModal c={modal.c} close={()=>setModal(null)} save={saveCompetition}/>}
-  {modal?.type==='templates'&&<RecurringModal templates={templates} close={()=>setModal(null)} newTemplate={()=>setModal({type:'template'})} edit={t=>setModal({type:'template',t})} start={startFromTemplate} newSeason={startNewSeason} deactivate={deactivateTemplate}/>}
+  {modal?.type==='templates'&&<RecurringModal templates={templates} close={()=>setModal(null)} newTemplate={()=>setModal({type:'template'})} edit={t=>setModal({type:'template',t})} start={startFromTemplate} newSeason={startNewSeason} deactivate={deactivateTemplate} openTables={openTemplateTables}/>}
   {modal?.type==='template'&&<TemplateModal t={modal.t} close={()=>setModal(null)} save={saveTemplate}/>}
+  {modal?.type==='templateTables'&&<TemplateTablesModal t={modal.t} tables={templateTables} close={()=>setModal(null)} add={()=>setModal({type:'templateTable',t:modal.t,table:null})} edit={table=>setModal({type:'templateTable',t:modal.t,table})} del={delTemplateTable}/>}
+  {modal?.type==='templateTable'&&<TableModal t={modal.table} close={()=>setModal({type:'templateTables',t:modal.t})} save={(f,old)=>saveTemplateTable(f,old,modal.t)}/>}
   </>;
 }
 
@@ -965,9 +1000,9 @@ function CompetitionModal({c,close,save}){
 }
 
 function dayName(n){return ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][Number(n)]}
-function RecurringModal({templates,close,newTemplate,edit,start,deactivate,newSeason}){
+function RecurringModal({templates,close,newTemplate,edit,start,deactivate,newSeason,openTables}){
   return <Modal title="Recurring tournaments" close={close}>
-    <div className="templateIntro"><strong>Run a season from the same recurring format.</strong><span>Season sessions count toward standings. Casual sessions are saved in history but do not affect the season.</span></div>
+    <div className="templateIntro"><strong>Run a season from the same recurring format.</strong><span>Players, check-ins, draws and results are new each session. Tables are shared by the recurring tournament, including casual nights, so your physical table setup and QR codes stay the same.</span></div>
     {templates.length===0&&<p className="muted">No recurring tournaments yet.</p>}
     {templates.map(t=><div className="templateCard" key={t.id}>
       <div><strong>{t.name}</strong><span>{dayName(t.day_of_week)} · {t.venue||'Venue TBC'}</span><small>{t.format} · {t.rules} · Race to {t.default_race_to}</small>
@@ -975,11 +1010,21 @@ function RecurringModal({templates,close,newTemplate,edit,start,deactivate,newSe
       <div className="actions">
         {t.season_enabled!==false&&<button className="primary" onClick={()=>start(t,'season')}>▶ Start season week</button>}
         <button onClick={()=>start(t,'casual')}>🎱 Start casual night</button>
+        <button onClick={()=>openTables(t)}>🎱 Tables</button>
         {t.season_enabled!==false&&<button onClick={()=>newSeason(t)}>🔄 New season</button>}
         <button onClick={()=>edit(t)}>✏️ Edit</button><button className="danger" onClick={()=>deactivate(t)}>Remove</button>
       </div>
     </div>)}
     <div className="ma"><button type="button" onClick={newTemplate} className="primary">＋ Create recurring tournament</button></div>
+  </Modal>
+}
+
+function TemplateTablesModal({t,tables,close,add,edit,del}){
+  return <Modal title={`Recurring tables — ${t.name}`} close={close}>
+    <div className="templateIntro"><strong>These tables are shared by every session.</strong><span>Table numbers, accessibility settings, notes and permanent QR scoring links carry through each season week and casual night.</span></div>
+    {tables.length===0&&<p className="muted">No recurring tables set up yet.</p>}
+    {tables.map(x=><div className="row" key={x.id}><div><b>Table {x.table_number} {x.is_accessible?'♿':''}</b><small>{x.table_type||'Standard'} · {x.status||'available'}{x.notes?` · ${x.notes}`:''}</small></div><div className="actions"><button onClick={()=>edit(x)}>✏️ Edit</button><button onClick={()=>del(x)} className="danger">🗑️ Delete</button></div></div>)}
+    <div className="ma"><button type="button" onClick={close}>Done</button><button className="primary" onClick={add}>＋ Add table</button></div>
   </Modal>
 }
 

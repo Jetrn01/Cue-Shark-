@@ -186,3 +186,12 @@ Database migration:
 - Shows played, wins, losses, points and frame differential.
 - Default points: 1 for a win, 0 for a loss.
 - Adds editable win/loss points to recurring templates via `v11.1-season-standings.sql`.
+
+## V11.2 — Persistent recurring table settings
+- Recurring tournaments can now own a permanent physical table setup.
+- Open **Recurring tournaments → 🎱 Tables** to add/edit/delete tables for the recurring template.
+- These table rows are reused by every season week and casual night.
+- Table number, table type, accessibility settings, notes and the existing permanent `table_token` carry forward, so printed QR codes stay the same.
+- Tables created from a recurring competition are saved against the recurring template rather than a single weekly session.
+- Existing one-off competition tables are unchanged.
+- Run `v11.2-recurring-table-settings.sql` after the V11.1 SQL migration before testing the new recurring table feature.
