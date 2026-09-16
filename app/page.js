@@ -261,6 +261,10 @@ export default function Home() {
       if(row.player1_id && row.player2_id) row.status='scheduled';
       else if(row.player1_id || row.player2_id){row.status='bye';row.winner_id=row.player1_id||row.player2_id;}
     }
+    // Link the bracket and track whether each branch can ever produce a real player.
+    // An empty feeder is only a true padding bye when its entire subtree is empty.
+    const potential = new Map();
+    for(const m of byRound[0]) potential.set(m.id, !!(m.player1_id || m.player2_id));
     for(let r=0;r<byRound.length-1;r++){
       for(let k=0;k<byRound[r].length;k++){
         const feeder=byRound[r][k];
@@ -271,26 +275,19 @@ export default function Home() {
           else target.player2_id=feeder.winner_id;
         }
       }
-
       for(const target of byRound[r+1]){
+        const feeders=byRound[r].filter(f=>f.next_match_id===target.id).sort((a,b)=>a.next_slot-b.next_slot);
+        potential.set(target.id, feeders.some(f=>potential.get(f.id)));
         if(target.player1_id && target.player2_id){
           target.status='scheduled';
           continue;
         }
-
         const sole=target.player1_id || target.player2_id;
         if(!sole) continue;
-
         const missingSlot=target.player1_id ? 2 : 1;
-        const paddingFeeder=byRound[r].find(
-          feeder=>feeder.next_match_id===target.id &&
-                   feeder.next_slot===missingSlot &&
-                   feeder.status==='waiting' &&
-                   !feeder.player1_id &&
-                   !feeder.player2_id
-        );
-
-        if(paddingFeeder){
+        const paddingFeeder=feeders.find(f=>f.next_slot===missingSlot);
+        // Only cascade a bye when the missing side has no possible player at all.
+        if(paddingFeeder && !potential.get(paddingFeeder.id)){
           target.status='bye';
           target.winner_id=sole;
         }
@@ -343,19 +340,30 @@ export default function Home() {
       }
       roundLists.push(current);
     }
-    // Propagate any first-round byes into their next-round slots.
+    // Propagate byes only through branches that are genuinely empty.
+    const potentialKO = new Map();
+    for(const m of roundLists[0]) potentialKO.set(m.id, !!(m.player1_id || m.player2_id));
     for(let r=0;r<roundLists.length-1;r++){
       for(const feeder of roundLists[r]){
-        if(feeder.status==='bye' && feeder.winner_id && feeder.next_match_id){
-          const target=all.find(x=>x.id===feeder.next_match_id);
-          if(target){
-            if(feeder.next_slot===1)target.player1_id=feeder.winner_id;
-            else target.player2_id=feeder.winner_id;
-          }
+        const target=all.find(x=>x.id===feeder.next_match_id);
+        if(!target) continue;
+        if(feeder.status==='bye' && feeder.winner_id){
+          if(feeder.next_slot===1)target.player1_id=feeder.winner_id;
+          else target.player2_id=feeder.winner_id;
         }
       }
       for(const m of roundLists[r+1]){
-        if(m.player1_id && m.player2_id)m.status='scheduled';
+        const feeders=roundLists[r].filter(f=>f.next_match_id===m.id).sort((a,b)=>a.next_slot-b.next_slot);
+        potentialKO.set(m.id, feeders.some(f=>potentialKO.get(f.id)));
+        if(m.player1_id && m.player2_id){m.status='scheduled';continue;}
+        const sole=m.player1_id||m.player2_id;
+        if(!sole) continue;
+        const missingSlot=m.player1_id?2:1;
+        const missing=feeders.find(f=>f.next_slot===missingSlot);
+        if(missing && !potentialKO.get(missing.id)){
+          m.status='bye';
+          m.winner_id=sole;
+        }
       }
     }
     const finalMatch=roundLists[roundLists.length-1][0];

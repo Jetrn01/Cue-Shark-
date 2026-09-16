@@ -1,0 +1,3 @@
+-- PottersMate V9.5
+-- No database changes are required for the 5-player bye-generation fix.
+-- This version only changes the client-side knockout draw generation logic.
