@@ -85,11 +85,31 @@ function SeasonLengthControl({value, onChange}){
   </div>
 }
 
+
+function buildSeasonStandings(players, seasonMatches, points){
+  const rows={};
+  const add=(id,name)=>{ if(!id) return; if(!rows[id]) rows[id]={id,name,played:0,wins:0,losses:0,points:0,framesFor:0,framesAgainst:0}; };
+  seasonMatches.forEach(m=>{
+    const p1=players.find(x=>x.player_id===m.player1_id)?.players;
+    const p2=players.find(x=>x.player_id===m.player2_id)?.players;
+    const n=(p)=>p?.display_name || [p?.first_name,p?.last_name].filter(Boolean).join(' ') || 'Player';
+    add(m.player1_id,n(p1)); add(m.player2_id,n(p2));
+    if(!rows[m.player1_id]||!rows[m.player2_id]) return;
+    rows[m.player1_id].played++; rows[m.player2_id].played++;
+    rows[m.player1_id].framesFor += Number(m.score1||0); rows[m.player1_id].framesAgainst += Number(m.score2||0);
+    rows[m.player2_id].framesFor += Number(m.score2||0); rows[m.player2_id].framesAgainst += Number(m.score1||0);
+    if(m.winner_id===m.player1_id){ rows[m.player1_id].wins++; rows[m.player2_id].losses++; rows[m.player1_id].points+=Number(points.win); rows[m.player2_id].points+=Number(points.loss); }
+    else if(m.winner_id===m.player2_id){ rows[m.player2_id].wins++; rows[m.player1_id].losses++; rows[m.player2_id].points+=Number(points.win); rows[m.player1_id].points+=Number(points.loss); }
+  });
+  return Object.values(rows).sort((a,b)=>b.points-a.points||b.wins-a.wins||(b.framesFor-b.framesAgainst)-(a.framesFor-a.framesAgainst)||b.framesFor-a.framesFor);
+}
+
 export default function Home() {
   const [session,setSession]=useState(null), [mode,setMode]=useState('login');
   const [email,setEmail]=useState(''),[password,setPassword]=useState(''),[authMsg,setAuthMsg]=useState('');
   const [competitions,setCompetitions]=useState([]),[selected,setSelected]=useState(null);
-  const [templates,setTemplates]=useState([]), [seasonCompetitions,setSeasonCompetitions]=useState([]);
+  const [templates,setTemplates]=useState([]), [seasonCompetitions,setSeasonCompetitions]=useState([]),
+    [seasonMatches,setSeasonMatches]=useState([]), [pointsSettings,setPointsSettings]=useState({win:1,loss:0});
   const [players,setPlayers]=useState([]),[tables,setTables]=useState([]),[matches,setMatches]=useState([]);
   const [modal,setModal]=useState(null),[msg,setMsg]=useState('');
   const [drawSettings,setDrawSettings]=useState({type:'Knockout',race_to:3,group_count:4});
@@ -122,7 +142,14 @@ export default function Home() {
     if(c.recurring_template_id && c.season_id){
       const {data:sc}=await supabase.from('competitions').select('*').eq('recurring_template_id',c.recurring_template_id).eq('season_id',c.season_id).order('season_week',{ascending:true});
       setSeasonCompetitions(sc||[]);
-    } else setSeasonCompetitions([]);
+      const seasonIds=(sc||[]).filter(x=>x.session_type==='season').map(x=>x.id);
+      if(seasonIds.length){
+        const {data:sm}=await supabase.from('competition_matches').select('competition_id,status,winner_id,loser_id,score1,score2,player1_id,player2_id').in('competition_id',seasonIds).eq('status','completed');
+        setSeasonMatches(sm||[]);
+      } else setSeasonMatches([]);
+      const tpl=templates.find(x=>x.id===c.recurring_template_id);
+      if(tpl) setPointsSettings({win:Number(tpl.win_points ?? 1),loss:Number(tpl.loss_points ?? 0)});
+    } else { setSeasonCompetitions([]); setSeasonMatches([]); }
   }
 
   async function saveCompetition(f){
@@ -765,6 +792,20 @@ export default function Home() {
     {selected.session_type==='casual'&&<div className="casualNote">Casual results do <b>not</b> alter season wins, losses or points.</div>}
   </Panel>}
 
+  {selected.recurring_template_id&&selected.session_type!=='casual'&&<Panel title="Season standings">
+    <div className="seasonStandingsHead">
+      <div><strong>🏆 {templates.find(t=>t.id===selected.recurring_template_id)?.name||'Season'}</strong>
+      <span>Week {selected.season_week||'?'} of {templates.find(t=>t.id===selected.recurring_template_id)?.season_length_weeks||8}</span></div>
+      <span>{pointsSettings.win} point{pointsSettings.win===1?'':'s'} for a win</span>
+    </div>
+    {buildSeasonStandings(players,seasonMatches,pointsSettings).length===0
+      ? <p className="muted">No completed season matches yet. Standings will appear after results are recorded.</p>
+      : <div className="standingsTableWrap"><table className="standingsTable"><thead><tr><th>#</th><th>Player</th><th>Played</th><th>W</th><th>L</th><th>Pts</th><th>FD</th></tr></thead><tbody>
+        {buildSeasonStandings(players,seasonMatches,pointsSettings).map((r,i)=><tr key={r.id}><td>{i+1}</td><td><strong>{r.name}</strong></td><td>{r.played}</td><td>{r.wins}</td><td>{r.losses}</td><td><strong>{r.points}</strong></td><td>{r.framesFor-r.framesAgainst>0?'+':''}{r.framesFor-r.framesAgainst}</td></tr>)}
+      </tbody></table></div>}
+    <small className="muted">Only completed matches from season sessions count. Casual nights are excluded.</small>
+  </Panel>}
+
   <Panel title="Players" add={()=>setModal({type:'player'})} addText="＋ Add player">
     <div className="drawTools"><button onClick={()=>setModal({type:'playerdb'})}>👥 Add from player database</button></div>
     {players.map(p=><div className="row" key={p.id}><div><b>{p.players?.display_name || `${p.players?.first_name||''} ${p.players?.last_name||''}`.trim() || 'Unnamed Player'}</b><small>{p.players?.club_name||'No club'}{p.players?.phone?` · ${p.players.phone}`:''}{p.players?.requires_accessible_table?' · ♿ Accessible table required':''}</small></div><div className="actions"><button onClick={()=>setModal({type:'player',p})}>✏️ Edit</button><button onClick={()=>checkin(p)}>{p.checked_in?'✓ Checked in':'Check in'}</button><button className="danger" onClick={()=>removePlayer(p)}>🗑️ Remove</button></div></div>)}
@@ -1025,6 +1066,13 @@ const css=`*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;ba
 .sessionBanner span{color:#667085}.checkLine{display:flex!important;flex-direction:row!important;align-items:center;gap:7px}.checkLine input{width:auto!important}
 .seasonPanelIntro{padding:10px 12px;border:1px solid #e3e7ee;border-radius:10px;background:#fafbfc}.seasonPanelIntro strong{display:block}.seasonPanelIntro span{display:block;color:#667085;font-size:12px;margin-top:3px}
 .seasonSessionList{margin-top:10px;border:1px solid #e3e7ee;border-radius:10px;overflow:hidden}.seasonSession{display:grid;grid-template-columns:90px 1fr auto;gap:10px;align-items:center;padding:9px 11px;border-top:1px solid #edf0f4}.seasonSession:first-child{border-top:0}.seasonSession span{color:#667085;font-size:12px}.seasonSession em{font-style:normal;font-size:11px;color:#667085}.seasonSession.current{background:#f8f9fc}.casualNote{margin-top:10px;padding:9px 11px;border-left:3px solid #b54708;background:#fffaf0;font-size:12px}
+
+
+.seasonStandingsHead{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:10px 12px;border:1px solid #e3e7ee;border-radius:10px;background:#fafbfc;margin-bottom:10px}
+.seasonStandingsHead strong{display:block}.seasonStandingsHead span{display:block;color:#667085;font-size:12px;margin-top:3px}
+.standingsTableWrap{overflow-x:auto;border:1px solid #e3e7ee;border-radius:10px}
+.standingsTable{width:100%;border-collapse:collapse;font-size:13px}.standingsTable th,.standingsTable td{padding:9px 10px;border-top:1px solid #edf0f4;text-align:left}.standingsTable th{border-top:0;background:#f8f9fc;font-size:11px;color:#667085}.standingsTable tr:first-child td{background:#fbfcff}
+@media(max-width:650px){.seasonStandingsHead{align-items:flex-start;flex-direction:column}}
 
 .bracket{display:flex;gap:18px;overflow-x:auto;padding:8px 2px 14px}
 .bracketRound{min-width:220px;flex:1}.bracketRound h4{text-align:center;margin:4px 0 12px;font-size:16px}

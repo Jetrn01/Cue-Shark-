@@ -177,3 +177,12 @@ Database migration:
 - The current competition shows whether it is a season or casual session.
 - The selected competition shows the season's completed/current session history.
 - Migration: `v11.0-season-management.sql`.
+
+
+## V11.1 Season Standings
+- Adds live season standings to recurring season competitions.
+- Counts completed matches from season sessions only.
+- Casual sessions are excluded automatically.
+- Shows played, wins, losses, points and frame differential.
+- Default points: 1 for a win, 0 for a loss.
+- Adds editable win/loss points to recurring templates via `v11.1-season-standings.sql`.
