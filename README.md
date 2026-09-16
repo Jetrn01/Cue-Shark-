@@ -1,5 +1,5 @@
-# PottersMate V6 — QR scoring corrected
+# PottersMate V6.1 — Live scoring
 
-The organiser dashboard now uses the table's permanent `table_token` for the Scoring link. The secure scoring functions also accept either the permanent token or the table UUID, so existing links remain usable.
+This build fixes the mobile scoring page so it uses the exact current match returned by the table scoring RPC, displays the real player names and race length, records frames against the current match, and completes the match at the race target.
 
-Run `v6-qr.sql` in Supabase, then deploy this package.
+No additional SQL is required if the V6 QR SQL/functions are already installed.
