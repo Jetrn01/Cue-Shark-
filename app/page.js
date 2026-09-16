@@ -1,100 +1,88 @@
 'use client';
 
-import { useEffect, useMemo, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
+import { useEffect, useState } from 'react';
+import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
 );
 
-const blankCompetition={name:"",venue:"",start_date:"",end_date:"",format:"Singles",rules:"CNZ Rules"};
-const blankPlayer={first_name:"",last_name:"",phone:"",email:"",club_name:""};
-
-function pname(p){return p?(`${p.first_name||""} ${p.last_name||""}`.trim()||"Unnamed Player"):"BYE"}
-
-export default function Home(){
- const [session,setSession]=useState(null),[loading,setLoading]=useState(true),[mode,setMode]=useState("login");
- const [email,setEmail]=useState(""),[password,setPassword]=useState(""),[message,setMessage]=useState("");
- const [competitions,setCompetitions]=useState([]),[selected,setSelected]=useState(null);
- const [compModal,setCompModal]=useState(false),[editing,setEditing]=useState(null),[cf,setCf]=useState(blankCompetition);
- const [players,setPlayers]=useState([]),[playerModal,setPlayerModal]=useState(false),[pf,setPf]=useState(blankPlayer);
- const [matches,setMatches]=useState([]),[drawModal,setDrawModal]=useState(false),[drawBusy,setDrawBusy]=useState(false);
- const [settings,setSettings]=useState({draw_type:"Knockout",race_to:3});
- const [expanded,setExpanded]=useState(false);
-
- useEffect(()=>{supabase.auth.getSession().then(({data})=>{setSession(data.session);setLoading(false)});const {data}=supabase.auth.onAuthStateChange((_e,s)=>setSession(s));return()=>data.subscription.unsubscribe()},[]);
- useEffect(()=>{if(session)loadCompetitions()},[session]);
- useEffect(()=>{if(selected){loadPlayers(selected.id);loadMatches(selected.id)}},[selected]);
-
- async function loadCompetitions(){const {data,error}=await supabase.from("competitions").select("*").order("start_date",{ascending:true});if(error)setMessage(error.message);else setCompetitions(data||[])}
- async function loadPlayers(cid){const {data,error}=await supabase.from("competition_players").select("id,checked_in,players(id,first_name,last_name,display_name,phone,email,club_name)").eq("competition_id",cid).order("created_at",{ascending:true});if(error)setMessage(error.message);else setPlayers(data||[])}
- async function loadMatches(cid){const {data,error}=await supabase.from("competition_matches").select("*").eq("competition_id",cid).order("round_number",{ascending:true}).order("match_number",{ascending:true});if(error)setMessage(error.message);else setMatches(data||[])}
-
- async function auth(e){e.preventDefault();setMessage("");const r=mode==="login"?await supabase.auth.signInWithPassword({email,password}):await supabase.auth.signUp({email,password});if(r.error)setMessage(r.error.message);else if(mode==="signup")setMessage("Account created. Check your email if confirmation is required, then log in.")}
-
- function openCreate(){setEditing(null);setCf(blankCompetition);setCompModal(true)}
- function openEdit(c){setEditing(c);setCf({name:c.name||"",venue:c.venue||"",start_date:c.start_date||"",end_date:c.end_date||"",format:c.format||"Singles",rules:c.rules||"CNZ Rules"});setCompModal(true)}
- async function saveComp(e){e.preventDefault();const r=editing?await supabase.from("competitions").update(cf).eq("id",editing.id):await supabase.from("competitions").insert([cf]);if(r.error)setMessage(r.error.message);else{setCompModal(false);await loadCompetitions()}}
-
- async function addPlayer(e){e.preventDefault();const {data:p,error}=await supabase.from("players").insert([pf]).select().single();if(error){setMessage(error.message);return}const {error:j}=await supabase.from("competition_players").insert([{competition_id:selected.id,player_id:p.id}]);if(j){setMessage(j.message);return}setPf(blankPlayer);setPlayerModal(false);loadPlayers(selected.id)}
- async function toggleCheck(row){const {error}=await supabase.from("competition_players").update({checked_in:!row.checked_in}).eq("id",row.id);if(error)setMessage(error.message);else loadPlayers(selected.id)}
- const checked=useMemo(()=>players.filter(x=>x.checked_in&&x.players),[players]);
-
- function shuffle(a){a=[...a];for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a}
- function orderedPlayers(list,type){if(type==="Random Draw")return shuffle(list);if(type==="Seeded Draw")return [...list];return [...list]}
-
- async function generateDraw(){
-  if(checked.length<2){setMessage("At least 2 checked-in players are required.");return}
-  setDrawBusy(true);setMessage("");
-  const del=await supabase.from("competition_matches").delete().eq("competition_id",selected.id);
-  if(del.error){setMessage(del.error.message);setDrawBusy(false);return}
-  const race=Number(settings.race_to), type=settings.draw_type, list=orderedPlayers(checked,type), rows=[];
-  if(type==="Round Robin"){
-   let a=list.map(x=>x.players), n=a.length; if(n%2){a=[...a,null];n++}
-   for(let r=0;r<n-1;r++){
-    for(let i=0;i<n/2;i++){const p1=a[i],p2=a[n-1-i];if(p1&&p2)rows.push({competition_id:selected.id,match_number:rows.length+1,round_number:r+1,player1_id:p1.id,player2_id:p2.id,race_to:race,status:"scheduled"})}
-    a=[a[0],a[n-1],...a.slice(1,n-1)]
-   }
-  } else {
-   let roundPlayers=list.map(x=>x.players), round=1;
-   while(roundPlayers.length>1){
-    if(roundPlayers.length%2)roundPlayers=[...roundPlayers,null];
-    const next=[];
-    for(let i=0;i<roundPlayers.length;i+=2){
-      const a=roundPlayers[i],b=roundPlayers[i+1];
-      rows.push({competition_id:selected.id,match_number:rows.length+1,round_number:round,player1_id:a?.id||null,player2_id:b?.id||null,race_to:race,status:"scheduled"});
-      next.push(null); // placeholder: progression is completed when results are entered in the live engine
-    }
-    if(roundPlayers.length<=2)break;
-    roundPlayers=new Array(Math.ceil(roundPlayers.length/2)).fill(null);round++;
-   }
-  }
-  const ins=await supabase.from("competition_matches").insert(rows);
-  if(ins.error)setMessage(ins.error.message);else{await loadMatches(selected.id);setDrawModal(false);setMessage(`Draw generated: ${rows.length} matches.`)}
-  setDrawBusy(false);
- }
- async function clearDraw(){if(!confirm("Clear the current draw?"))return;const r=await supabase.from("competition_matches").delete().eq("competition_id",selected.id);if(r.error)setMessage(r.error.message);else loadMatches(selected.id)}
-
- if(loading)return <main style={{padding:40}}>Loading PottersMate…</main>;
- const input={padding:12,border:"1px solid #ccc",borderRadius:8,fontSize:16};
- return <main style={{maxWidth:1100,margin:"0 auto",padding:"28px 20px",fontFamily:"Arial,sans-serif"}}>
-  <header style={{background:"#111",color:"#fff",borderRadius:18,padding:28,marginBottom:22}}><div style={{fontSize:12,letterSpacing:2,opacity:.7}}>CUE SPORT TOURNAMENT MANAGEMENT</div><h1 style={{fontSize:42,margin:"7px 0"}}>🎱 PottersMate</h1><p style={{margin:0,fontSize:17}}>Run competitions. Track players. Run the day.</p></header>
-  {!session?<section style={{background:"#fff",padding:24,borderRadius:18,maxWidth:500}}><h2>{mode==="login"?"Organiser Login":"Create Organiser Account"}</h2><form onSubmit={auth} style={{display:"grid",gap:12}}><input required type="email" placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)} style={input}/><input required type="password" placeholder="Password" value={password} onChange={e=>setPassword(e.target.value)} style={input}/><button style={{...input,background:"#111",color:"#fff"}}>{mode==="login"?"Log In":"Create Account"}</button></form><button onClick={()=>setMode(mode==="login"?"signup":"login")} style={{marginTop:12,border:0,background:"none",textDecoration:"underline"}}>{mode==="login"?"Create an organiser account":"Back to login"}</button>{message&&<p>{message}</p>}</section>:
-  <>
-   <section style={{background:"#fff",padding:20,borderRadius:18,marginBottom:18,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><h2 style={{margin:0}}>Organiser Dashboard</h2><small>{session.user.email}</small></div><button onClick={()=>supabase.auth.signOut()}>Log out</button></section>
-   {!selected?<section style={{background:"#fff",padding:24,borderRadius:18}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><h2>Competitions</h2><button onClick={openCreate} style={{padding:10,background:"#111",color:"#fff"}}>+ Create Competition</button></div>{message&&<p>{message}</p>}{competitions.map(c=><div key={c.id} style={{padding:"16px 0",borderBottom:"1px solid #ddd",display:"flex",justifyContent:"space-between",gap:10}}><div><b>{c.name}</b><div>{c.venue||"Venue TBC"} · {c.start_date||"Date TBC"}</div><small>{c.format||"Singles"} · {c.rules||"CNZ Rules"}</small></div><div><button onClick={()=>setSelected(c)}>Open</button> <button onClick={()=>openEdit(c)}>Edit</button></div></div>)}</section>:
-   <section style={{background:"#fff",padding:24,borderRadius:18}}><button onClick={()=>setSelected(null)}>← Competitions</button><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,marginTop:12,flexWrap:"wrap"}}><div><h2 style={{margin:"0 0 5px"}}>{selected.name}</h2><div>{selected.venue} · {selected.start_date}</div><small>{selected.format} · {selected.rules}</small></div><div style={{display:"flex",gap:8,flexWrap:"wrap"}}><button onClick={()=>setPlayerModal(true)}>+ Add Player</button><button onClick={()=>setDrawModal(true)} style={{background:"#176b3a",color:"#fff",border:0,padding:"9px 14px",borderRadius:8}}>🎱 Build Draw</button></div></div>
-    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,margin:"22px 0"}}><div style={{padding:15,border:"1px solid #ddd",borderRadius:10}}>REGISTERED<br/><b style={{fontSize:28}}>{players.length}</b></div><div style={{padding:15,border:"1px solid #ddd",borderRadius:10}}>CHECKED IN<br/><b style={{fontSize:28}}>{checked.length}</b></div><div style={{padding:15,border:"1px solid #ddd",borderRadius:10}}>MATCHES<br/><b style={{fontSize:28}}>{matches.length}</b></div></div>
-    <h2>Players</h2>{players.length?<table style={{width:"100%",borderCollapse:"collapse"}}><thead><tr><th align="left">Player</th><th align="left">Club</th><th>Check-in</th></tr></thead><tbody>{players.map(r=><tr key={r.id}><td style={{padding:9,borderBottom:"1px solid #eee"}}>{pname(r.players)}</td><td style={{padding:9,borderBottom:"1px solid #eee"}}>{r.players?.club_name||"—"}</td><td style={{padding:9,borderBottom:"1px solid #eee",textAlign:"center"}}><button onClick={()=>toggleCheck(r)}>{r.checked_in?"Checked In":"Check In"}</button></td></tr>)}</tbody></table>:<p>No players yet.</p>}
-    <hr style={{margin:"28px 0"}}/><div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><h2>Draw & Matches</h2><small>V5 supports the core draw styles and race lengths. Match results will drive progression in the live scoring version.</small></div>{matches.length>0&&<button onClick={clearDraw}>Clear Draw</button>}</div>
-    {matches.length===0?<p>No draw generated.</p>:<div style={{display:"grid",gap:9,marginTop:12}}>{matches.map(m=>{const p1=players.find(x=>x.players?.id===m.player1_id)?.players,p2=players.find(x=>x.players?.id===m.player2_id)?.players;return <div key={m.id} style={{padding:14,border:"1px solid #ddd",borderRadius:10,display:"grid",gridTemplateColumns:"80px 1fr 1fr 100px",gap:10,alignItems:"center"}}><b>R{m.round_number} · #{m.match_number}</b><span>{pname(p1)}</span><span>{pname(p2)}</span><span>Race to {m.race_to}</span></div>})}</div>}
-   </section>}
-  </>}
-  {compModal&&<div style={modal}><form onSubmit={saveComp} style={box}><h2>{editing?"Edit":"Create"} Competition</h2><input required placeholder="Competition name" value={cf.name} onChange={e=>setCf({...cf,name:e.target.value})} style={input}/><input placeholder="Venue" value={cf.venue} onChange={e=>setCf({...cf,venue:e.target.value})} style={input}/><label>Start date<input required type="date" value={cf.start_date} onChange={e=>setCf({...cf,start_date:e.target.value})} style={{...input,width:"100%"}}/></label><label>End date<input type="date" value={cf.end_date} onChange={e=>setCf({...cf,end_date:e.target.value})} style={{...input,width:"100%"}}/></label><label>Format<select value={cf.format} onChange={e=>setCf({...cf,format:e.target.value})} style={{...input,width:"100%"}}>{["Singles","Doubles","Teams","Scotch","Round Robin","League","Speed Pool","Custom"].map(x=><option key={x}>{x}</option>)}</select></label><label>Rules<select value={cf.rules} onChange={e=>setCf({...cf,rules:e.target.value})} style={{...input,width:"100%"}}><option>CNZ Rules</option><option>International Rules</option><option>Custom</option></select></label><div><button type="button" onClick={()=>setCompModal(false)}>Cancel</button> <button>Save</button></div></form></div>}
-  {playerModal&&<div style={modal}><form onSubmit={addPlayer} style={box}><h2>Add Player</h2><input required placeholder="First name" value={pf.first_name} onChange={e=>setPf({...pf,first_name:e.target.value})} style={input}/><input required placeholder="Last name" value={pf.last_name} onChange={e=>setPf({...pf,last_name:e.target.value})} style={input}/><input placeholder="Phone" value={pf.phone} onChange={e=>setPf({...pf,phone:e.target.value})} style={input}/><input type="email" placeholder="Email" value={pf.email} onChange={e=>setPf({...pf,email:e.target.value})} style={input}/><input placeholder="Club" value={pf.club_name} onChange={e=>setPf({...pf,club_name:e.target.value})} style={input}/><div><button type="button" onClick={()=>setPlayerModal(false)}>Cancel</button> <button>Add Player</button></div></form></div>}
-  {drawModal&&<div style={modal}><section style={box}><h2>Build Draw</h2><p>{checked.length} checked-in players</p><label style={{display:"grid",gap:6}}>Draw style<select value={settings.draw_type} onChange={e=>setSettings({...settings,draw_type:e.target.value})} style={{...input,width:"100%"}}><option>Knockout</option><option>Random Draw</option><option>Seeded Draw</option><option>Round Robin</option></select></label><label style={{display:"grid",gap:6,marginTop:12}}>Race to<select value={settings.race_to} onChange={e=>setSettings({...settings,race_to:e.target.value})} style={{...input,width:"100%"}}>{[1,2,3,5,7,9].map(n=><option key={n} value={n}>{n}</option>)}</select></label><p style={{background:"#f4f4f4",padding:12,borderRadius:8}}>Format: <b>{selected.format}</b> · {settings.draw_type} · Race to {settings.race_to}</p><div><button onClick={()=>setDrawModal(false)}>Cancel</button> <button disabled={drawBusy} onClick={generateDraw}>{drawBusy?"Generating…":"Generate Draw"}</button></div></section></div>}
- </main>
+function Modal({title, children, close}) {
+  return <div className="backdrop"><div className="modal">
+    <div className="mh"><h3>{title}</h3><button onClick={close}>✕</button></div>{children}
+  </div></div>
 }
-const modal={position:"fixed",inset:0,background:"rgba(0,0,0,.45)",display:"grid",placeItems:"center",padding:20,zIndex:20};
-const box={background:"#fff",borderRadius:18,padding:24,width:"min(540px,100%)",display:"grid",gap:12};
+
+export default function Home() {
+  const [session,setSession]=useState(null), [mode,setMode]=useState('login');
+  const [email,setEmail]=useState(''),[password,setPassword]=useState(''),[authMsg,setAuthMsg]=useState('');
+  const [competitions,setCompetitions]=useState([]),[selected,setSelected]=useState(null);
+  const [players,setPlayers]=useState([]),[tables,setTables]=useState([]),[matches,setMatches]=useState([]);
+  const [modal,setModal]=useState(null),[msg,setMsg]=useState('');
+
+  useEffect(()=>{supabase.auth.getSession().then(({data})=>setSession(data.session));
+    const {data:s}=supabase.auth.onAuthStateChange((_e,x)=>setSession(x)); return()=>s.subscription.unsubscribe()},[]);
+  useEffect(()=>{if(session) loadCompetitions()},[session]);
+
+  async function loadCompetitions(){const {data,error}=await supabase.from('competitions').select('*').order('date',{ascending:false}); if(error)setMsg(error.message);else setCompetitions(data||[])}
+  async function load(c){setSelected(c);
+    const [p,m,t]=await Promise.all([
+      supabase.from('competition_players').select('id,player_id,checked_in,players(id,name,phone,club)').eq('competition_id',c.id),
+      supabase.from('competition_matches').select('*').eq('competition_id',c.id).order('match_number'),
+      supabase.from('tournament_tables').select('*').eq('competition_id',c.id).order('table_number')
+    ]); setPlayers(p.data||[]);setMatches(m.data||[]);setTables(t.data||[])}
+
+  async function auth(e){e.preventDefault();setAuthMsg('');
+    const r=mode==='login'?await supabase.auth.signInWithPassword({email,password}):await supabase.auth.signUp({email,password});
+    if(r.error)setAuthMsg(r.error.message)
+  }
+  async function savePlayer(f){let error;
+    const data={name:f.name.trim(),phone:f.phone.trim(),club:f.club.trim()};
+    if(f.playerId) ({error}=await supabase.from('players').update(data).eq('id',f.playerId));
+    else {const r=await supabase.from('players').insert(data).select().single();error=r.error;if(!error)({error}=await supabase.from('competition_players').insert({competition_id:selected.id,player_id:r.data.id,checked_in:false}))}
+    if(error)setMsg(error.message);else{setModal(null);load(selected)}
+  }
+  async function removePlayer(p){if(!confirm(`Remove ${p.players?.name||'this player'} from this competition?`))return;
+    const {error}=await supabase.from('competition_players').delete().eq('id',p.id);if(error)setMsg(error.message);else load(selected)}
+  async function checkin(p){await supabase.from('competition_players').update({checked_in:!p.checked_in}).eq('id',p.id);load(selected)}
+  async function saveTable(f,old){let r;
+    const data={table_number:Number(f.table_number),table_type:f.table_type,notes:f.notes,is_accessible:f.is_accessible,status:f.status};
+    if(old)r=await supabase.from('tournament_tables').update(data).eq('id',old.id);else r=await supabase.from('tournament_tables').insert({...data,competition_id:selected.id});
+    if(r.error)setMsg(r.error.message);else{setModal(null);load(selected)}
+  }
+  async function delTable(t){if(!confirm(`Delete Table ${t.table_number}?`))return;const r=await supabase.from('tournament_tables').delete().eq('id',t.id);if(r.error)setMsg(r.error.message);else load(selected)}
+  async function assign(m,id){const r=await supabase.from('competition_matches').update({table_id:id||null}).eq('id',m.id);if(r.error)setMsg(r.error.message);else load(selected)}
+
+  if(!session)return <><style>{css}</style><main className="auth"><div className="card"><h1>🎱 PottersMate</h1><p>Competition management for cue-sport clubs.</p><form onSubmit={auth}><input type="email" placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)} required/><input type="password" placeholder="Password" value={password} onChange={e=>setPassword(e.target.value)} required/><button className="primary">{mode==='login'?'Log in':'Create organiser account'}</button></form>{authMsg&&<p className="error">{authMsg}</p>}<button className="link" onClick={()=>setMode(mode==='login'?'signup':'login')}>{mode==='login'?'Need an organiser account?':'Already have an account? Log in'}</button></div></main></>;
+
+  const checked=players.filter(p=>p.checked_in).length;
+  return <><style>{css}</style><header><div><h1>🎱 PottersMate</h1><small>Organiser Dashboard</small></div><button onClick={()=>supabase.auth.signOut()}>Log out</button></header>
+  {msg&&<div className="notice">{msg}<button onClick={()=>setMsg('')}>✕</button></div>}
+  <div className="layout"><aside><b>Competitions</b>{competitions.map(c=><button className={selected?.id===c.id?'sel':''} key={c.id} onClick={()=>load(c)}>{c.name}<small>{c.date} · {c.venue||''}</small></button>)}</aside>
+  {!selected?<section className="empty"><h2>Select a competition</h2><p>Manage players, tables and match assignments.</p></section>:
+  <section className="content"><div className="hero"><div><h2>{selected.name}</h2><p>{selected.venue} · {selected.date}</p></div><div className="stats"><b>{players.length} players</b><b>{checked} checked in</b><b>{tables.length} tables</b></div></div>
+
+  <Panel title="Players" add={()=>setModal({type:'player'})} addText="＋ Add player">
+    {players.map(p=><div className="row" key={p.id}><div><b>{p.players?.name}</b><small>{p.players?.club||'No club'}{p.players?.phone?` · ${p.players.phone}`:''}</small></div><div className="actions"><button onClick={()=>setModal({type:'player',p})}>✏️ Edit</button><button onClick={()=>checkin(p)}>{p.checked_in?'✓ Checked in':'Check in'}</button><button className="danger" onClick={()=>removePlayer(p)}>🗑️ Remove</button></div></div>)}
+  </Panel>
+
+  <Panel title="Tables" add={()=>setModal({type:'table'})} addText="＋ Add table">
+    {tables.length===0&&<p className="muted">No tables added yet.</p>}
+    {tables.map(t=><div className="row" key={t.id}><div><b>Table {t.table_number} {t.is_accessible?'♿':''}</b><small>{t.table_type||'Standard'} · {t.status||'available'}{t.notes?` · ${t.notes}`:''}</small></div><div className="actions"><select value={t.status||'available'} onChange={e=>saveTable({...t,status:e.target.value},t)}><option value="available">Available</option><option value="occupied">Occupied</option><option value="unavailable">Unavailable</option></select><button onClick={()=>setModal({type:'table',t})}>✏️ Edit</button><button className="danger" onClick={()=>delTable(t)}>🗑️ Delete</button><div className="qr">QR<br/>Table {t.table_number}</div></div></div>)}
+  </Panel>
+
+  <Panel title="Matches & Table Assignment">
+    {matches.map(m=><div className="row" key={m.id}><div><b>Match {m.match_number}</b><small>Race to {m.race_to} · {m.status}</small></div><select value={m.table_id||''} onChange={e=>assign(m,e.target.value)}><option value="">Unassigned</option>{tables.filter(t=>t.status!=='unavailable').map(t=><option key={t.id} value={t.id}>Table {t.table_number}{t.is_accessible?' ♿':''}</option>)}</select></div>)}
+  </Panel>
+  </section>}</div>
+  {modal?.type==='player'&&<PlayerModal p={modal.p} close={()=>setModal(null)} save={savePlayer}/>}
+  {modal?.type==='table'&&<TableModal t={modal.t} close={()=>setModal(null)} save={saveTable}/>}
+  </>;
+}
+
+function Panel({title,add,addText,children}){return <div className="panel"><div className="ph"><h3>{title}</h3>{add&&<button className="primary" onClick={add}>{addText}</button>}</div>{children}</div>}
+function PlayerModal({p,close,save}){const x=p?.players||{};const[f,setF]=useState({playerId:x.id||'',name:x.name||'',phone:x.phone||'',club:x.club||''});return <Modal title={p?'Edit player':'Add player'} close={close}><form onSubmit={e=>{e.preventDefault();save(f)}}><label>Name<input required value={f.name} onChange={e=>setF({...f,name:e.target.value})}/></label><label>Phone<input value={f.phone} onChange={e=>setF({...f,phone:e.target.value})}/></label><label>Club<input value={f.club} onChange={e=>setF({...f,club:e.target.value})}/></label><div className="ma"><button type="button" onClick={close}>Cancel</button><button className="primary">Save changes</button></div></form></Modal>}
+function TableModal({t,close,save}){const[f,setF]=useState({table_number:t?.table_number||'',table_type:t?.table_type||'Standard',notes:t?.notes||'',is_accessible:!!t?.is_accessible,status:t?.status||'available'});return <Modal title={t?'Edit table':'Add table'} close={close}><form onSubmit={e=>{e.preventDefault();save(f,t)}}><label>Table number<input required type="number" min="1" value={f.table_number} onChange={e=>setF({...f,table_number:e.target.value})}/></label><label>Table type<select value={f.table_type} onChange={e=>setF({...f,table_type:e.target.value})}><option>Standard</option><option>Accessible</option><option>Reserved / Unavailable</option></select></label><label className="check"><input type="checkbox" checked={f.is_accessible} onChange={e=>setF({...f,is_accessible:e.target.checked})}/> Accessible table ♿</label><label>Table notes<textarea value={f.notes} onChange={e=>setF({...f,notes:e.target.value})}/></label><div className="ma"><button type="button" onClick={close}>Cancel</button><button className="primary">Save</button></div></form></Modal>}
+
+const css=`*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:#f5f7fa;color:#172033}button,input,select,textarea{font:inherit}button{cursor:pointer;border:1px solid #d8dee8;background:#fff;border-radius:8px;padding:9px 12px}.primary{background:#172033;color:#fff;border-color:#172033}.danger{color:#b42318}.link{border:0;background:none;color:#315fdb}.auth{min-height:100vh;display:grid;place-items:center}.card{background:#fff;padding:36px;border-radius:18px;box-shadow:0 12px 40px #0001;width:min(430px,92vw)}.card form{display:grid;gap:12px}.card input{padding:12px;border:1px solid #ccd3df;border-radius:8px}.error{color:#b42318}header{background:#fff;border-bottom:1px solid #e4e8ef;padding:15px 24px;display:flex;justify-content:space-between;align-items:center}header h1{margin:0;font-size:25px}.layout{display:grid;grid-template-columns:260px 1fr;max-width:1400px;margin:auto;min-height:calc(100vh - 72px)}aside{background:#fff;border-right:1px solid #e4e8ef;padding:15px}aside button{display:block;width:100%;text-align:left;border:0;margin-top:6px}aside small{display:block;color:#758096;margin-top:4px}.sel{background:#eef2ff}.content{padding:22px;max-width:1100px}.hero{background:#fff;border:1px solid #e3e7ee;border-radius:14px;padding:20px;display:flex;justify-content:space-between;margin-bottom:18px}.hero h2{margin:0 0 6px}.hero p{margin:0;color:#6a7587}.stats{display:flex;gap:15px;align-items:center;flex-wrap:wrap}.stats b{background:#f5f7fa;padding:10px 12px;border-radius:8px}.panel{background:#fff;border:1px solid #e3e7ee;border-radius:14px;margin-bottom:18px;padding:16px}.ph{display:flex;justify-content:space-between;align-items:center}.ph h3{margin:0}.row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid #edf0f4}.row small{display:block;color:#707b8d;margin-top:4px}.actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap}.qr{border:1px dashed #aab3c2;border-radius:6px;padding:8px;text-align:center;font-size:11px}.muted{color:#778194}.empty{padding:70px 30px}.notice{margin:14px auto;padding:10px 14px;background:#fff4e5;border:1px solid #ffd7a3;width:94%;border-radius:8px}.notice button{float:right;padding:2px 7px}.backdrop{position:fixed;inset:0;background:#0006;display:grid;place-items:center;padding:18px}.modal{background:#fff;width:min(520px,95vw);border-radius:14px;padding:18px}.mh{display:flex;justify-content:space-between;align-items:center}.modal form{display:grid;gap:12px}.modal label{display:grid;gap:5px;font-weight:600}.modal input,.modal select,.modal textarea{padding:10px;border:1px solid #ccd3df;border-radius:8px}.modal textarea{min-height:80px}.check{display:flex!important;align-items:center;gap:8px}.ma{display:flex;justify-content:flex-end;gap:8px}@media(max-width:850px){.layout{grid-template-columns:1fr}aside{border-right:0;border-bottom:1px solid #e4e8ef}.hero{display:block}.row{flex-direction:column;align-items:flex-start}.actions{width:100%}}`;
