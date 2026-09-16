@@ -78,3 +78,18 @@ Automatic knockout progression is now more complete:
 
 Run `v9.4-automatic-progression.sql` once in Supabase SQL Editor.
 No new tables are required.
+
+
+## V10.0 Tournament Control
+Built from V9.5 (5-player bye fix).
+
+Tournament Control is now the organiser's live command centre:
+- Live status banner with 5-second automatic refresh
+- Summary counts for Playing, Ready, Waiting, Available tables, and Completed matches
+- Table cards showing current match, live score, scoring link, accessibility status, and notes
+- Ready queue ordered with accessibility-required matches first
+- Clear message when a ready match is waiting for a suitable table
+- Waiting-for-earlier-matches section
+- Latest-results section showing completed matches and winners
+- Existing Assign Next Ready logic and accessibility protection preserved
+- No new database tables required
