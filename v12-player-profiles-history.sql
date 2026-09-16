@@ -1,0 +1,4 @@
+-- PottersMate V12 - Player Profiles & Match History
+-- No new tables are required. V12 derives player history from existing
+-- competition_matches / matches and players data.
+-- This migration is intentionally empty so it is safe to run.

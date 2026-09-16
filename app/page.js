@@ -113,9 +113,10 @@ export default function Home() {
   const [templateTables,setTemplateTables]=useState([]);
   const [players,setPlayers]=useState([]),[tables,setTables]=useState([]),[matches,setMatches]=useState([]);
   const [modal,setModal]=useState(null),[msg,setMsg]=useState('');
-  const [drawSettings,setDrawSettings]=useState({type:'Knockout',race_to:3,group_count:4});
+  const [drawSettings,setDrawSettings]=useState({type:'Knockout',race_to:3,group_count:4,knockout_seeding:'seeded'});
   const [qrData,setQrData]=useState(null);
   const [playerDB,setPlayerDB]=useState([]);
+  const [profileData,setProfileData]=useState({player:null,matches:[],competitions:[],templates:[],loading:false});
 
   useEffect(()=>{supabase.auth.getSession().then(({data})=>setSession(data.session));
     const {data:s}=supabase.auth.onAuthStateChange((_e,x)=>setSession(x)); return()=>s.subscription.unsubscribe()},[]);
@@ -316,6 +317,42 @@ export default function Home() {
     } else setMsg(f.playerId?'Player updated.':'Player added to player database.');
   }
 
+  async function openPlayerProfile(p){
+    const player = p?.players ? p.players : p;
+    if(!player?.id)return;
+    setProfileData({player,matches:[],competitions:[],templates:[],loading:true});
+    setModal({type:'playerProfile'});
+    const {data:matchData,error:matchError}=await supabase
+      .from('competition_matches')
+      .select('id,competition_id,match_number,round_number,player1_id,player2_id,race_to,score1,score2,status,winner_id,loser_id,winner_balls,created_at')
+      .eq('status','completed')
+      .or(`player1_id.eq.${player.id},player2_id.eq.${player.id}`)
+      .order('created_at',{ascending:false});
+    if(matchError){
+      setMsg(`Could not load ${player.display_name||'player'} history: ${matchError.message}`);
+      setProfileData({player,matches:[],competitions:[],templates:[],loading:false});
+      return;
+    }
+    const matchesHistory=matchData||[];
+    const ids=[...new Set(matchesHistory.map(m=>m.competition_id).filter(Boolean))];
+    let competitionsHistory=[];
+    if(ids.length){
+      const {data:cd}=await supabase.from('competitions')
+        .select('id,name,start_date,venue,session_type,season_week,season_id,recurring_template_id')
+        .in('id',ids);
+      competitionsHistory=cd||[];
+    }
+    const templateIds=[...new Set(competitionsHistory.map(c=>c.recurring_template_id).filter(Boolean))];
+    let templatesHistory=[];
+    if(templateIds.length){
+      const {data:td}=await supabase.from('competition_templates')
+        .select('id,name,win_points,loss_points')
+        .in('id',templateIds);
+      templatesHistory=td||[];
+    }
+    setProfileData({player,matches:matchesHistory,competitions:competitionsHistory,templates:templatesHistory,loading:false});
+  }
+
   async function removePlayer(p){if(!confirm(`Remove ${p.players?.display_name || `${p.players?.first_name||''} ${p.players?.last_name||''}`.trim() || 'this player'} from this competition?`))return;
     const {error}=await supabase.from('competition_players').delete().eq('id',p.id);if(error)setMsg(error.message);else load(selected)}
   async function checkin(p){await supabase.from('competition_players').update({checked_in:!p.checked_in}).eq('id',p.id);load(selected)}
@@ -439,7 +476,18 @@ export default function Home() {
 
     const race=Number(settings.race_to||selected.default_race_to||3);
     let ordered=[...checkedPlayers];
-    if(settings.type==='Random Draw') ordered.sort(()=>Math.random()-0.5);
+    const knockoutMode = settings.type==='Random Draw' ? 'random' : settings.type==='Seeded Draw' ? 'seeded' : (settings.knockout_seeding||'seeded');
+    if(settings.type==='Random Draw' || (settings.type==='Knockout' && knockoutMode==='random')) ordered.sort(()=>Math.random()-0.5);
+    if((settings.type==='Knockout' || settings.type==='Seeded Draw') && knockoutMode==='seeded'){
+      const bracketSize=2**Math.ceil(Math.log2(ordered.length));
+      let seedOrder=[1,2];
+      for(let n=2;n<bracketSize;n*=2){
+        const next=[];
+        for(const seed of seedOrder) next.push(seed, n*2+1-seed);
+        seedOrder=next;
+      }
+      ordered=seedOrder.map(seed=>checkedPlayers[seed-1]||null);
+    }
 
     if(settings.type==='Round Robin'){
       const rows=[]; let n=1;
@@ -841,7 +889,7 @@ export default function Home() {
 
   <Panel title="Players" add={()=>setModal({type:'player'})} addText="＋ Add player">
     <div className="drawTools"><button onClick={()=>setModal({type:'playerdb'})}>👥 Add from player database</button></div>
-    {players.map(p=><div className="row" key={p.id}><div><b>{p.players?.display_name || `${p.players?.first_name||''} ${p.players?.last_name||''}`.trim() || 'Unnamed Player'}</b><small>{p.players?.club_name||'No club'}{p.players?.phone?` · ${p.players.phone}`:''}{p.players?.requires_accessible_table?' · ♿ Accessible table required':''}</small></div><div className="actions"><button onClick={()=>setModal({type:'player',p})}>✏️ Edit</button><button onClick={()=>checkin(p)}>{p.checked_in?'✓ Checked in':'Check in'}</button><button className="danger" onClick={()=>removePlayer(p)}>🗑️ Remove</button></div></div>)}
+    {players.map(p=><div className="row" key={p.id}><div><button className="playerNameButton" onClick={()=>openPlayerProfile(p)}><b>{p.players?.display_name || `${p.players?.first_name||''} ${p.players?.last_name||''}`.trim() || 'Unnamed Player'}</b></button><small>{p.players?.club_name||'No club'}{p.players?.phone?` · ${p.players.phone}`:''}{p.players?.requires_accessible_table?' · ♿ Accessible table required':''}</small></div><div className="actions"><button onClick={()=>openPlayerProfile(p)}>📊 Profile</button><button onClick={()=>setModal({type:'player',p})}>✏️ Edit</button><button onClick={()=>checkin(p)}>{p.checked_in?'✓ Checked in':'Check in'}</button><button className="danger" onClick={()=>removePlayer(p)}>🗑️ Remove</button></div></div>)}
   </Panel>
 
   <Panel title="Tables" add={()=>setModal({type:'table'})} addText="＋ Add table">
@@ -873,7 +921,8 @@ export default function Home() {
   </Panel>}
   </section>}</div>
   {qrData&&<QRModal data={qrData} close={()=>setQrData(null)}/>}
-  {modal?.type==='playerdb'&&<PlayerDatabaseModal players={playerDB} currentPlayers={players} close={()=>setModal(null)} add={addExistingPlayerToCompetition} edit={(p)=>setModal({type:'masterPlayer',p})} deletePlayer={deleteMasterPlayer} newPlayer={()=>setModal({type:'masterPlayer',p:null})}/>}
+  {modal?.type==='playerdb'&&<PlayerDatabaseModal players={playerDB} currentPlayers={players} close={()=>setModal(null)} add={addExistingPlayerToCompetition} edit={(p)=>setModal({type:'masterPlayer',p})} deletePlayer={deleteMasterPlayer} newPlayer={()=>setModal({type:'masterPlayer',p:null})} profile={openPlayerProfile}/>}
+  {modal?.type==='playerProfile'&&<PlayerProfileModal data={profileData} close={()=>setModal(null)} playerName={playerName}/>}
   {modal?.type==='draw'&&<DrawModal selected={selected} players={players} settings={drawSettings} setSettings={setDrawSettings} close={()=>setModal(null)} generate={generateDraw} generateGroups={generateGroupsReverseCrossover}/>}
   {modal?.type==='masterPlayer'&&<MasterPlayerModal p={modal.p} allowAdd={!!selected} close={()=>setModal(null)} save={saveMasterPlayer}/>}
   {modal?.type==='player'&&<PlayerModal p={modal.p} close={()=>setModal(null)} save={savePlayer}/>}
@@ -898,6 +947,11 @@ function DrawModal({selected,players,settings,setSettings,close,generate,generat
     <label>Draw type<select value={isReverse?'Groups → Reverse Crossover':settings.type} onChange={e=>setSettings({...settings,type:e.target.value})}>
       <option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Seeded Draw</option><option>Groups → Reverse Crossover</option>
     </select></label>
+    {(settings.type==='Knockout'||settings.type==='Seeded Draw'||settings.type==='Random Draw') && <label>Knockout seeding<select value={settings.type==='Random Draw'?'random':settings.type==='Seeded Draw'?'seeded':(settings.knockout_seeding||'seeded')} onChange={e=>setSettings({...settings,knockout_seeding:e.target.value,type:'Knockout'})}>
+      <option value="seeded">Seeded — 1 vs 16, 8 vs 9…</option>
+      <option value="random">Random</option>
+      <option value="current">Current player order</option>
+    </select></label>}
     {isReverse && <label>Number of groups<select value={groupCount} onChange={e=>setSettings({...settings,group_count:Number(e.target.value),type:'Groups → Reverse Crossover'})}>
       {groupOptions.length?groupOptions.map(n=><option key={n} value={n}>{n} groups</option>):<option value="2">2 groups</option>}
     </select></label>}
@@ -905,10 +959,10 @@ function DrawModal({selected,players,settings,setSettings,close,generate,generat
       {[1,2,3,5,7,9].map(n=><option key={n} value={n}>Race to {n}</option>)}
     </select></label>
     <div className="settingNote">
-      {settings.type==='Knockout'&&'Winners automatically progress through later rounds.'}
+      {settings.type==='Knockout'&&`Winners automatically progress through later rounds. ${settings.knockout_seeding==='current'?'Players are paired in current checked-in order.':settings.knockout_seeding==='random'?'Players are shuffled randomly.':'Traditional seeded bracket: 1 vs 16, 8 vs 9, 4 vs 13, 5 vs 12, 2 vs 15, 7 vs 10, 3 vs 14, 6 vs 11 (for 16 players).'}`}
       {settings.type==='Round Robin'&&'Every checked-in player plays every other player once.'}
       {settings.type==='Random Draw'&&'Players are shuffled before the knockout draw.'}
-      {settings.type==='Seeded Draw'&&'Players stay in their current checked-in order as the seed order.'}
+      {settings.type==='Seeded Draw'&&'Traditional seeded knockout bracket. Seed 1 plays the lowest seed, with standard bracket positions.'}
       {isReverse&&`Players are split as evenly as possible into ${groupCount} groups. After the group stage, groups are paired A vs B, C vs D, etc. Within each pair, 1st plays last, 2nd plays second-last, and so on. Odd or uneven crossover slots receive byes.`}
     </div>
     {isReverse && checked>=2 && <div className="drawPreviewNote"><strong>{checked} players:</strong> {groupCount} groups of about {Math.floor(checked/groupCount)}–{Math.ceil(checked/groupCount)} players. Any crossover byes will be shown in the generated draw.</div>}
@@ -938,7 +992,60 @@ function QRModal({data,close}){
   </Modal>
 }
 
-function PlayerDatabaseModal({players,currentPlayers,close,add,edit,deletePlayer,newPlayer}){
+
+function PlayerProfileModal({data,close,playerName}){
+  const {player,matches,competitions,templates,loading}=data;
+  const name=player?.display_name||`${player?.first_name||''} ${player?.last_name||''}`.trim()||'Player';
+  const byId=Object.fromEntries((competitions||[]).map(c=>[c.id,c]));
+  const templateById=Object.fromEntries((templates||[]).map(t=>[t.id,t]));
+  const otherName=(id)=>playerName?.(id)||'Player';
+  const wins=(matches||[]).filter(m=>m.winner_id===player?.id).length;
+  const losses=(matches||[]).filter(m=>m.loser_id===player?.id).length;
+  const played=wins+losses;
+  const framesFor=(matches||[]).reduce((n,m)=>n+Number(m.player1_id===player?.id?m.score1||0:m.score2||0),0);
+  const framesAgainst=(matches||[]).reduce((n,m)=>n+Number(m.player1_id===player?.id?m.score2||0:m.score1||0),0);
+  const fd=framesFor-framesAgainst;
+  const winPct=played?Math.round((wins/played)*100):0;
+  const seasonMatches=(matches||[]).filter(m=>byId[m.competition_id]?.session_type==='season');
+  const seasonGroups={};
+  seasonMatches.forEach(m=>{
+    const c=byId[m.competition_id]; const key=c?.season_id||c?.id;
+    if(!seasonGroups[key])seasonGroups[key]={name:c?.name||'Season',played:0,wins:0,losses:0,points:0,fd:0,weeks:new Set()};
+    const g=seasonGroups[key]; g.played++; if(m.winner_id===player?.id)g.wins++; if(m.loser_id===player?.id)g.losses++;
+    g.fd += Number(m.player1_id===player?.id?(m.score1||0)-(m.score2||0):(m.score2||0)-(m.score1||0));
+    const tpl=templateById[c?.recurring_template_id]; g.points += m.winner_id===player?.id?Number(tpl?.win_points??1):Number(tpl?.loss_points??0);
+    if(c?.season_week)g.weeks.add(c.season_week);
+  });
+  const seasonRows=Object.values(seasonGroups).sort((a,b)=>b.points-a.points||b.wins-a.wins);
+  const compGroups={};
+  (matches||[]).forEach(m=>{
+    const c=byId[m.competition_id]; const key=m.competition_id;
+    if(!compGroups[key])compGroups[key]={name:c?.name||'Competition',date:c?.start_date||'',type:c?.session_type||'single',played:0,wins:0,losses:0,fd:0};
+    const g=compGroups[key];g.played++;if(m.winner_id===player?.id)g.wins++;if(m.loser_id===player?.id)g.losses++;
+    g.fd+=Number(m.player1_id===player?.id?(m.score1||0)-(m.score2||0):(m.score2||0)-(m.score1||0));
+  });
+  return <Modal title={`${name} — Player profile`} close={close}>
+    {loading?<p className="muted">Loading player history…</p>:<>
+      <div className="profileHero">
+        <div><h2>{name}</h2><p>{player?.club_name||'No club'}{player?.requires_accessible_table?' · ♿ Accessible table required':''}</p></div>
+        <div className="profileStats">
+          <div><b>{played}</b><span>Matches</span></div><div><b>{wins}</b><span>Wins</span></div><div><b>{losses}</b><span>Losses</span></div><div><b>{winPct}%</b><span>Win rate</span></div><div><b>{framesFor}</b><span>Frames for</span></div><div><b>{fd>=0?`+${fd}`:fd}</b><span>Frame diff.</span></div>
+        </div>
+      </div>
+      <section className="profileSection"><h4>🏆 Season history</h4>
+        {seasonRows.length===0?<p className="muted">No completed season matches yet.</p>:<div className="profileTable"><div className="profileTableHead"><span>Season</span><span>Played</span><span>W–L</span><span>Pts</span><span>FD</span></div>{seasonRows.map((g,i)=><div className="profileTableRow" key={i}><span><b>{g.name}</b></span><span>{g.played}</span><span>{g.wins}–{g.losses}</span><span>{g.points}</span><span>{g.fd>=0?`+${g.fd}`:g.fd}</span></div>)}</div>}
+      </section>
+      <section className="profileSection"><h4>🎱 Competition history</h4>
+        {Object.values(compGroups).length===0?<p className="muted">No completed matches yet.</p>:<div className="profileTable"><div className="profileTableHead"><span>Competition</span><span>Played</span><span>W–L</span><span>FD</span></div>{Object.values(compGroups).map((g,i)=><div className="profileTableRow" key={i}><span><b>{g.name}</b><small>{g.date}{g.type==='casual'?' · 🎱 Casual':g.type==='season'?' · 🏆 Season':''}</small></span><span>{g.played}</span><span>{g.wins}–{g.losses}</span><span>{g.fd>=0?`+${g.fd}`:g.fd}</span></div>)}</div>}
+      </section>
+      <section className="profileSection"><h4>🕐 Recent matches</h4>
+        {(matches||[]).length===0?<p className="muted">No completed matches yet.</p>:<div className="profileMatches">{matches.slice(0,10).map(m=>{const c=byId[m.competition_id];const isP1=m.player1_id===player?.id;const opponent=otherName(isP1?m.player2_id:m.player1_id);const won=m.winner_id===player?.id;return <div className="profileMatch" key={m.id}><div><b>{name} {won?'defeated':'lost to'} {opponent}</b><small>{c?.name||'Competition'}{c?.session_type==='casual'?' · 🎱 Casual':c?.season_week?` · 🏆 Week ${c.season_week}`:''}</small></div><strong>{m.score1??0} – {m.score2??0}</strong></div>})}</div>}
+      </section>
+    </>}
+  </Modal>
+}
+
+function PlayerDatabaseModal({players,currentPlayers,close,add,edit,deletePlayer,newPlayer,profile}){
   const [q,setQ]=useState('');
   const current=new Set(currentPlayers.map(x=>x.player_id));
   const filtered=players.filter(p=>{
@@ -952,7 +1059,7 @@ function PlayerDatabaseModal({players,currentPlayers,close,add,edit,deletePlayer
       {filtered.length===0&&<p className="muted">No players found.</p>}
       {filtered.map(p=><div className="row" key={p.id}>
         <div><b>{p.display_name||`${p.first_name||''} ${p.last_name||''}`.trim()}</b><small>{p.club_name||'No club'}{p.phone?` · ${p.phone}`:''}{p.email?` · ${p.email}`:''}{p.requires_accessible_table?' · ♿ Accessible table required':''}</small></div>
-        <div className="actions"><button onClick={()=>edit(p)}>✏️ Edit</button>{current.has(p.id)?<button disabled>✓ In competition</button>:<button className="primary" onClick={()=>add(p)}>＋ Add</button>}<button className="danger" onClick={()=>deletePlayer(p)}>🗑️ Delete</button></div>
+        <div className="actions"><button onClick={()=>profile(p)}>📊 Profile</button><button onClick={()=>edit(p)}>✏️ Edit</button>{current.has(p.id)?<button disabled>✓ In competition</button>:<button className="primary" onClick={()=>add(p)}>＋ Add</button>}<button className="danger" onClick={()=>deletePlayer(p)}>🗑️ Delete</button></div>
       </div>)}
     </div>
   </Modal>
@@ -1053,6 +1160,13 @@ function TemplateModal({t,close,save}){
 
 function TableModal({t,close,save}){const[f,setF]=useState({table_number:t?.table_number||'',table_type:t?.table_type||'Standard',notes:t?.notes||'',is_accessible:!!t?.is_accessible,status:t?.status||'available'});return <Modal title={t?'Edit table':'Add table'} close={close}><form onSubmit={e=>{e.preventDefault();save(f,t)}}><label>Table number<input required type="number" min="1" value={f.table_number} onChange={e=>setF({...f,table_number:e.target.value})}/></label><label>Table type<select value={f.table_type} onChange={e=>setF({...f,table_type:e.target.value})}><option>Standard</option><option>Accessible</option><option>Reserved / Unavailable</option></select></label><label className="check"><input type="checkbox" checked={f.is_accessible} onChange={e=>setF({...f,is_accessible:e.target.checked})}/> Accessible table ♿</label><label>Table notes<textarea value={f.notes} onChange={e=>setF({...f,notes:e.target.value})}/></label><div className="ma"><button type="button" onClick={close}>Cancel</button><button className="primary">Save</button></div></form></Modal>}
 
+
+.playerNameButton{border:0;background:transparent;padding:0;text-align:left;color:#172033}.playerNameButton:hover{text-decoration:underline}
+.profileHero{background:#f7f8fb;border:1px solid #e3e7ee;border-radius:14px;padding:16px;margin-bottom:18px}.profileHero h2{margin:0 0 5px}.profileHero p{margin:0;color:#667085}
+.profileStats{display:grid;grid-template-columns:repeat(6,minmax(80px,1fr));gap:8px;margin-top:16px}.profileStats>div{background:#fff;border:1px solid #e3e7ee;border-radius:10px;padding:10px;text-align:center}.profileStats b{display:block;font-size:21px}.profileStats span{display:block;color:#667085;font-size:11px;margin-top:3px}
+.profileSection{border-top:1px solid #edf0f4;padding-top:15px;margin-top:15px}.profileSection h4{margin:0 0 10px}.profileTable{border:1px solid #e3e7ee;border-radius:10px;overflow:hidden}.profileTableHead,.profileTableRow{display:grid;grid-template-columns:2fr .7fr .7fr .7fr .7fr;gap:8px;padding:10px 12px;align-items:center}.profileTableHead{background:#f7f8fb;font-size:12px;font-weight:800;color:#667085}.profileTableRow{border-top:1px solid #edf0f4}.profileTableRow small{display:block;color:#667085;font-size:11px;margin-top:3px}
+.profileMatches{display:grid;gap:7px}.profileMatch{display:flex;justify-content:space-between;gap:15px;align-items:center;border:1px solid #e3e7ee;border-radius:10px;padding:11px 12px}.profileMatch small{display:block;color:#667085;margin-top:3px}.profileMatch strong{font-size:18px;white-space:nowrap}
+@media(max-width:700px){.profileStats{grid-template-columns:repeat(3,1fr)}.profileTableHead,.profileTableRow{grid-template-columns:1.7fr .6fr .7fr .7fr .7fr}.profileMatch{align-items:flex-start}}
 const css=`*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:#f5f7fa;color:#172033}button,input,select,textarea{font:inherit}button{cursor:pointer;border:1px solid #d8dee8;background:#fff;border-radius:8px;padding:9px 12px}.primary{background:#172033;color:#fff;border-color:#172033}.danger{color:#b42318}.link{border:0;background:none;color:#315fdb}.auth{min-height:100vh;display:grid;place-items:center}.card{background:#fff;padding:36px;border-radius:18px;box-shadow:0 12px 40px #0001;width:min(430px,92vw)}.card form{display:grid;gap:12px}.card input{padding:12px;border:1px solid #ccd3df;border-radius:8px}.error{color:#b42318}header{background:#fff;border-bottom:1px solid #e4e8ef;padding:15px 24px;display:flex;justify-content:space-between;align-items:center}header h1{margin:0;font-size:25px}.layout{display:grid;grid-template-columns:260px 1fr;max-width:1400px;margin:auto;min-height:calc(100vh - 72px)}aside{background:#fff;border-right:1px solid #e4e8ef;padding:15px}.asideTitle{display:flex;flex-direction:column;gap:10px;margin-bottom:10px}.createBtn{width:100%;font-weight:700}aside button{display:block;width:100%;text-align:left;border:0;margin-top:6px}aside small{display:block;color:#758096;margin-top:4px}.sel{background:#eef2ff}.content{padding:22px;max-width:1100px}.hero{background:#fff;border:1px solid #e3e7ee;border-radius:14px;padding:20px;display:flex;justify-content:space-between;margin-bottom:18px}.hero h2{margin:0 0 6px}.hero p{margin:0;color:#6a7587}.heroRight{display:flex;flex-direction:column;align-items:flex-end;gap:12px}.settingsSummary{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px;color:#667085;font-size:13px}.settingsSummary span{background:#f5f7fa;padding:7px 9px;border-radius:7px}.dbTop{display:flex;gap:8px;margin-bottom:10px}.dbTop input{flex:1}.dbList{max-height:55vh;overflow:auto}.settingNote{background:#f5f7fa;border:1px solid #e3e7ee;border-radius:8px;padding:10px;color:#667085;font-size:13px;line-height:1.4}.stats{display:flex;gap:15px;align-items:center;flex-wrap:wrap}.stats b{background:#f5f7fa;padding:10px 12px;border-radius:8px}.panel{background:#fff;border:1px solid #e3e7ee;border-radius:14px;margin-bottom:18px;padding:16px}.ph{display:flex;justify-content:space-between;align-items:center}.ph h3{margin:0}.row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid #edf0f4}.row small{display:block;color:#707b8d;margin-top:4px}.actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap}.qr{border:1px dashed #aab3c2;border-radius:6px;padding:8px;text-align:center;font-size:11px}.qrLarge{display:flex;justify-content:center;align-items:center;padding:8px}.qrLarge img{width:320px;height:320px;max-width:100%;image-rendering:auto}.scoreLink{padding:9px 12px;border:1px solid #d8dee8;border-radius:8px;text-decoration:none;color:#172033;background:#fff}.muted{color:#778194}.drawTools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}.empty{padding:70px 30px}.notice{margin:14px auto;padding:10px 14px;background:#fff4e5;border:1px solid #ffd7a3;width:94%;border-radius:8px}.notice button{float:right;padding:2px 7px}.backdrop{position:fixed;inset:0;background:#0006;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:18px}.modal{background:#fff;width:min(520px,95vw);max-height:calc(100vh - 36px);overflow-y:auto;border-radius:14px;padding:18px;margin:auto 0}.mh{display:flex;justify-content:space-between;align-items:center}.modal form{display:grid;gap:12px}.modal label{display:grid;gap:5px;font-weight:600}.modal input,.modal select,.modal textarea{padding:10px;border:1px solid #ccd3df;border-radius:8px}.modal textarea{min-height:80px}.check{display:flex!important;align-items:center;gap:8px}.ma{display:flex;justify-content:flex-end;gap:8px}@media(max-width:850px){.heroRight{align-items:flex-start;margin-top:15px}.layout{grid-template-columns:1fr}aside{border-right:0;border-bottom:1px solid #e4e8ef}.hero{display:block}.row{flex-direction:column;align-items:flex-start}.actions{width:100%}}
 .controlIntro{display:flex;justify-content:space-between;gap:14px;align-items:center;background:#f7f8fb;border:1px solid #e3e7ee;border-radius:12px;padding:13px 15px;margin:10px 0 14px}
 .controlIntro strong{display:block}.controlIntro span{display:block;color:#667085;font-size:13px;margin-top:3px}.liveBadge{font-size:11px!important;font-weight:800;color:#087443!important;background:#ecfdf3;border:1px solid #abefc6;border-radius:999px;padding:6px 9px;white-space:nowrap}
