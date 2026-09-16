@@ -310,7 +310,10 @@ export default function Home() {
       {matches.length===0&&<p className="muted">No matches created yet.</p>}
     </div>
     {matches.map(m=><div className="row" key={m.id}>
-      <div><b>Match {m.match_number} · Round {m.round_number}</b><small>{playerName(m.player1_id)} vs {playerName(m.player2_id)} · Race to {m.race_to} · {m.status}{m.winner_id?' · Winner recorded':''}</small></div>
+      <div><b>Match {m.match_number} · Round {m.round_number}</b><small>
+        {playerName(m.player1_id)} vs {playerName(m.player2_id)} · Race to {m.race_to} · {m.status}
+        {m.status==='completed' && <> · <strong>Result: {m.score1 ?? 0} – {m.score2 ?? 0}</strong>{m.winner_id ? <> · Winner: {playerName(m.winner_id)}</> : null}{Number(m.race_to)===1 && m.winner_balls !== null && m.winner_balls !== undefined ? <> · {m.winner_balls} balls remaining</> : null}</>}
+      </small></div>
       <select value={m.table_id||''} onChange={e=>assign(m,e.target.value)} disabled={m.status==='completed'}><option value="">Unassigned</option>{tables.filter(t=>t.status!=='unavailable').map(t=><option key={t.id} value={t.id}>Table {t.table_number}{t.is_accessible?' ♿':''}</option>)}</select>
     </div>)}
   </Panel>

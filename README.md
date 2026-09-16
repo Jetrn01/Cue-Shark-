@@ -43,3 +43,7 @@ Adds a Delete button to the master Player Database with a confirmation prompt.
 
 ## V8.5
 Displays completed match results in the organiser match list, including score, winner, and balls remaining for Race-to-1 matches.
+
+
+## V8.6
+Fixes organiser match-list display so completed results show score, winner, and Race-to-1 balls remaining.
