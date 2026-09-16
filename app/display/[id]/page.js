@@ -69,6 +69,7 @@ export default function DisplayPage() {
   const [tables, setTables] = useState([]);
   const [error, setError] = useState('');
   const [slide, setSlide] = useState(0);
+  const [hasLiveMatch, setHasLiveMatch] = useState(false);
 
   async function load() {
     if (!competitionId) return;
@@ -97,6 +98,9 @@ export default function DisplayPage() {
     }
     setPlayers(playerRows);
     setMatches(mRes.data || []);
+    const liveNow = (mRes.data || []).some(m => m.table_id && m.status !== 'completed');
+    if (liveNow && !hasLiveMatch) setSlide(0);
+    setHasLiveMatch(liveNow);
     setTables(tableRows);
   }
 
@@ -118,7 +122,7 @@ export default function DisplayPage() {
   const currentScreen = screens[slide % screens.length];
 
   useEffect(() => {
-    const timer = setInterval(() => setSlide(s => s + 1), 10000);
+    const timer = setInterval(() => setSlide(s => s + 1), 15000);
     return () => clearInterval(timer);
   }, [screens.length]);
 
@@ -172,7 +176,7 @@ export default function DisplayPage() {
       {completed.length ? completed.map(m => <article className="bigListRow resultRow" key={m.id}><div><span className="matchTag">MATCH {m.match_number}</span><strong>{playerName(m.player1_id)} <em>vs</em> {playerName(m.player2_id)}</strong><small>Winner: {playerName(m.winner_id)}</small></div><div className="resultBig">{m.score1 ?? 0} – {m.score2 ?? 0}</div></article>) : <div className="emptyTv"><strong>No completed matches yet.</strong><span>Results will appear here as matches finish.</span></div>}
     </section>}
 
-    <footer className="tvFooter"><span>PottersMate · Tournament display</span><span>Screen changes every 10 seconds</span></footer>
+    <footer className="tvFooter"><span>PottersMate · Tournament display</span><span>Screen changes every 15 seconds</span></footer>
     <style>{css}</style>
   </main>;
 }
