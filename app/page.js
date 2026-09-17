@@ -694,8 +694,13 @@ export default function Home() {
     if(m.status==='completed') return 'Completed';
     if(m.status==='scheduled') return 'Ready to play';
     if(m.status==='in_progress' || m.status==='active') return 'Playing';
-    if(m.status==='bye') return 'Bye';
+    if(m.status==='bye') return 'Bye — advances automatically';
     return 'Waiting';
+  }
+
+  function matchPlayersLabel(m){
+    if(m.status==='bye' && m.winner_id) return `${playerName(m.winner_id)} advances`;
+    return `${playerName(m.player1_id)} vs ${playerName(m.player2_id)}`;
   }
 
   function roundName(round,totalRounds){
@@ -715,8 +720,12 @@ export default function Home() {
         <div className="bracketMatches">
           {round.map(m=><div className={`bracketMatch ${m.status==='completed'?'done':''}`} key={m.id}>
             <div className="bracketMatchNo">Match {m.match_number}</div>
-            <div className={m.winner_id===m.player1_id?'winnerLine':''}>{playerName(m.player1_id)} <b>{m.status==='completed'?m.score1:''}</b></div>
-            <div className={m.winner_id===m.player2_id?'winnerLine':''}>{playerName(m.player2_id)} <b>{m.status==='completed'?m.score2:''}</b></div>
+            {m.status==='bye'
+              ? <div className="bracketBye"><strong>{playerName(m.winner_id)} advances</strong><span>BYE</span></div>
+              : <>
+                  <div className={m.winner_id===m.player1_id?'winnerLine':''}>{playerName(m.player1_id)} <b>{m.status==='completed'?m.score1:''}</b></div>
+                  <div className={m.winner_id===m.player2_id?'winnerLine':''}>{playerName(m.player2_id)} <b>{m.status==='completed'?m.score2:''}</b></div>
+                </>}
             <small>{matchStatusLabel(m)}{m.status==='completed' && m.winner_id ? ` · ${playerName(m.winner_id)} advances` : ''}</small>
           </div>)}
         </div>
@@ -892,13 +901,15 @@ export default function Home() {
       {matches.some(m=>m.group_name)&&matches.filter(m=>m.group_name).every(m=>m.status==='completed')&&<button onClick={generateReverseCrossover}>🏆 Generate Reverse Crossover</button>}
       {matches.length===0&&<p className="muted">No matches created yet.</p>}
     </div>
-    {matches.map(m=><div className="row" key={m.id}>
+    {matches.map(m=><div className={`row ${m.status==='bye'?'byeRow':''}`} key={m.id}>
       <div><b>Match {m.match_number} · {m.group_name?`Group ${m.group_name} · `:''}Round {m.round_number}</b><small>
-        {playerName(m.player1_id)} vs {playerName(m.player2_id)} · Race to {m.race_to} · {matchStatusLabel(m)}
+        {matchPlayersLabel(m)} · Race to {m.race_to} · {matchStatusLabel(m)}
         {m.status==='completed' && <> · <strong>Result: {m.score1 ?? 0} – {m.score2 ?? 0}</strong>{m.winner_id ? <> · Winner: {playerName(m.winner_id)}</> : null}{Number(m.race_to)===1 && m.winner_balls !== null && m.winner_balls !== undefined ? <> · {m.winner_balls} balls remaining</> : null}</>}
-        {m.status==='bye' && m.winner_id && <> · <strong>Bye: {playerName(m.winner_id)} advances</strong></>}
+        {m.status==='bye' && m.winner_id && <> · <strong>Bye: {playerName(m.winner_id)} advances automatically</strong></>}
       </small></div>
-      <select value={m.table_id||''} onChange={e=>assign(m,e.target.value)} disabled={m.status==='completed'}><option value="">Unassigned</option>{tables.filter(t=>{if(t.status==='unavailable')return false;const needs=[m.player1_id,m.player2_id].some(pid=>players.find(x=>x.player_id===pid)?.players?.requires_accessible_table);return !needs || t.is_accessible;}).map(t=><option key={t.id} value={t.id}>Table {t.table_number}{t.is_accessible?' ♿':''}</option>)}</select>
+      {m.status==='bye'
+        ? <span className="byeBadge">BYE</span>
+        : <select value={m.table_id||''} onChange={e=>assign(m,e.target.value)} disabled={m.status==='completed'}><option value="">Unassigned</option>{tables.filter(t=>{if(t.status==='unavailable')return false;const needs=[m.player1_id,m.player2_id].some(pid=>players.find(x=>x.player_id===pid)?.players?.requires_accessible_table);return !needs || t.is_accessible;}).map(t=><option key={t.id} value={t.id}>Table {t.table_number}{t.is_accessible?' ♿':''}</option>)}</select>}
     </div>)}
   </Panel>
   {matches.length>0 && <Panel title="Tournament Control">
@@ -1226,4 +1237,6 @@ const css=`*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;ba
 .profileSection{border-top:1px solid #edf0f4;padding-top:15px;margin-top:15px}.profileSection h4{margin:0 0 10px}.profileTable{border:1px solid #e3e7ee;border-radius:10px;overflow:hidden}.profileTableHead,.profileTableRow{display:grid;grid-template-columns:2fr .7fr .7fr .7fr .7fr;gap:8px;padding:10px 12px;align-items:center}.profileTableHead{background:#f7f8fb;font-size:12px;font-weight:800;color:#667085}.profileTableRow{border-top:1px solid #edf0f4}.profileTableRow small{display:block;color:#667085;font-size:11px;margin-top:3px}
 .profileMatches{display:grid;gap:7px}.profileMatch{display:flex;justify-content:space-between;gap:15px;align-items:center;border:1px solid #e3e7ee;border-radius:10px;padding:11px 12px}.profileMatch small{display:block;color:#667085;margin-top:3px}.profileMatch strong{font-size:18px;white-space:nowrap}
 @media(max-width:700px){.profileStats{grid-template-columns:repeat(3,1fr)}.profileTableHead,.profileTableRow{grid-template-columns:1.7fr .6fr .7fr .7fr .7fr}.profileMatch{align-items:flex-start}}
+
+.byeRow{background:#fafbfc}.byeBadge{display:inline-flex;align-items:center;border:1px solid #d8dee8;border-radius:999px;padding:6px 10px;font-size:11px;font-weight:800;color:#667085}.bracketBye{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px;border:1px dashed #d8dee8;border-radius:8px;background:#fafbfc}.bracketBye span{font-size:10px;font-weight:800;color:#667085}
 `;
