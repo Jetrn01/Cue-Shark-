@@ -9,6 +9,8 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
 );
 
+function PottersMateMark(){return <div className="pmScoreBrand"><svg viewBox="0 0 100 82" aria-hidden="true"><path d="M12 64 C24 31 43 12 69 12 C84 12 92 21 92 34 C92 48 81 56 66 56 L43 56 L36 70 L20 70 Z" fill="none" stroke="currentColor" strokeWidth="9" strokeLinecap="round" strokeLinejoin="round"/><path d="M18 60 C27 40 39 28 52 22" fill="none" stroke="var(--pm-purple)" strokeWidth="8" strokeLinecap="round"/><circle cx="66" cy="34" r="17" fill="#0b0b0d" stroke="currentColor" strokeWidth="5"/><circle cx="66" cy="34" r="10" fill="#fff"/><text x="66" y="39" textAnchor="middle" fontSize="13" fontWeight="900" fill="#0b0b0d">8</text></svg><b>Potters<span>Mate</span></b></div>}
+
 export default function ScorePage() {
   const params = useParams();
   const token = params?.token;
@@ -119,7 +121,7 @@ export default function ScorePage() {
       <>
         <style>{css}</style>
         <main className="scorePage">
-          <header className="brand"><span className="ball">8</span><span>PottersMate</span></header>
+          <header className="brand"><PottersMateMark/></header>
           <div className="card loading">Loading table…</div>
         </main>
       </>
@@ -131,7 +133,7 @@ export default function ScorePage() {
       <>
         <style>{css}</style>
         <main className="scorePage">
-          <header className="brand"><span className="ball">8</span><span>PottersMate</span></header>
+          <header className="brand"><PottersMateMark/></header>
           <div className="tableTitle">
             TABLE {data?.table_number || ''}{data?.is_accessible ? ' ♿' : ''}
           </div>
@@ -149,7 +151,7 @@ export default function ScorePage() {
     <>
       <style>{css}</style>
       <main className="scorePage">
-        <header className="brand"><span className="ball">8</span><span>PottersMate</span></header>
+        <header className="brand"><PottersMateMark/></header>
         <div className="tableTitle">
           TABLE {data.table_number}{data.is_accessible ? ' ♿' : ''}
         </div>

@@ -9,6 +9,19 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
 );
 
+function PottersMateBrand({compact=false}){
+  return <div className={`pmBrand ${compact?'pmBrandCompact':''}`} aria-label="PottersMate">
+    <svg className="pmMark" viewBox="0 0 100 82" aria-hidden="true">
+      <path d="M12 64 C24 31 43 12 69 12 C84 12 92 21 92 34 C92 48 81 56 66 56 L43 56 L36 70 L20 70 Z" fill="none" stroke="currentColor" strokeWidth="9" strokeLinecap="round" strokeLinejoin="round"/>
+      <path d="M18 60 C27 40 39 28 52 22" fill="none" stroke="var(--pm-purple)" strokeWidth="8" strokeLinecap="round"/>
+      <circle cx="66" cy="34" r="17" fill="#0b0b0d" stroke="currentColor" strokeWidth="5"/>
+      <circle cx="66" cy="34" r="10" fill="#fff"/>
+      <text x="66" y="39" textAnchor="middle" fontSize="13" fontWeight="900" fill="#0b0b0d">8</text>
+    </svg>
+    {!compact && <span className="pmWordmark"><b>Potters</b><strong>Mate</strong><small>TOURNAMENT MANAGEMENT</small></span>}
+  </div>
+}
+
 function Modal({title, children, close}) {
   return <div className="backdrop"><div className="modal">
     <div className="mh"><h3>{title}</h3><button onClick={close}>✕</button></div>{children}
@@ -870,7 +883,7 @@ export default function Home() {
   if(!session)return <><style>{css}</style><main className="auth"><div className="card"><div className="brandLockup"><span className="brandBall">8</span><span><b>Potters</b><strong>Mate</strong><small>TOURNAMENT CONTROL</small></span></div><p>Competition management for cue-sport clubs.</p><form onSubmit={auth}><input type="email" placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)} required/><input type="password" placeholder="Password" value={password} onChange={e=>setPassword(e.target.value)} required/><button className="primary">{mode==='login'?'Log in':'Create organiser account'}</button></form>{authMsg&&<p className="error">{authMsg}</p>}<button className="link" onClick={()=>setMode(mode==='login'?'signup':'login')}>{mode==='login'?'Need an organiser account?':'Already have an account? Log in'}</button></div></main></>;
 
   const checked=players.filter(p=>p.checked_in).length;
-  return <><style>{css}</style><header><div className="appBrand"><span className="brandBall">8</span><span><h1><b>Potters</b><strong>Mate</strong></h1><small>Organiser Dashboard</small></span></div><button onClick={()=>supabase.auth.signOut()}>Log out</button></header>
+  return <><style>{css}</style><header><div className="appBrand"><PottersMateBrand compact/><span><h1>PottersMate</h1><small>Organiser Dashboard</small></span></div><button onClick={()=>supabase.auth.signOut()}>Log out</button></header>
   {msg&&<div className="notice">{msg}<button onClick={()=>setMsg('')}>✕</button></div>}
   <div className="layout"><aside><div className="asideTitle"><b>Competitions</b><button className="primary createBtn" onClick={()=>{setSelected(null);setModal({type:'competition',c:null})}}>＋ Create competition</button><button onClick={()=>setModal({type:'templates'})}>🔄 Recurring tournaments</button><button onClick={()=>setModal({type:'playerdb'})}>👥 Player database</button></div>{competitions.map(c=><button className={selected?.id===c.id?'sel':''} key={c.id} onClick={()=>load(c)}>{c.name}<small>{c.start_date||'Date TBC'} · {c.venue||''}</small></button>)}</aside>
   {!selected?<section className="empty"><h2>Select a competition</h2><p>Manage players, tables and match assignments.</p></section>:
@@ -932,6 +945,7 @@ export default function Home() {
     </div>)}
   </Panel>
   {matches.length>0 && <Panel title="Tournament Control">
+    <div className="controlBrandHeader"><PottersMateBrand compact/><div><strong>Tournament Control</strong><small>Run the night from one command centre.</small></div></div>
     <TournamentControl tables={tables} matches={matches} playerName={playerName}/>
   </Panel>}
   {matches.length>0 && (selected.format||'').toLowerCase()==='knockout' && <Panel title="Knockout Bracket">
@@ -1265,4 +1279,6 @@ const css=`*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;ba
 .tournamentStatusStrip{display:flex;align-items:center;gap:10px;margin-top:10px;padding:9px 11px;border:1px solid #dfe4ec;border-radius:10px;background:#fafbfc;max-width:620px}.tournamentStatusStrip b{display:block;color:#344054}.tournamentStatusStrip small{display:block;color:#667085;margin-top:2px}.phaseDot{width:9px;height:9px;border-radius:50%;background:#12b76a;flex:0 0 auto}.drawLockedNote{margin:10px 0;padding:10px 12px;border:1px solid #d0d5dd;border-radius:9px;background:#f2f4f7;color:#475467;font-size:12px}.drawWarningNote{margin:10px 0;padding:10px 12px;border:1px solid #fedf89;border-radius:9px;background:#fffaf0;color:#7a4b00;font-size:12px}
 
 .brandLockup,.appBrand{display:flex;align-items:center;gap:11px}.brandBall{width:34px;height:34px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:#151d32;color:#fff;font-weight:900;font-size:17px;border:3px solid #eef1f6;box-shadow:0 2px 5px rgba(16,24,40,.16);flex:0 0 auto}.brandLockup b,.appBrand b{font-weight:900;color:#151d32}.brandLockup strong,.appBrand strong{font-weight:900;color:#6f42d9}.brandLockup span:last-child,.appBrand span:last-child{display:flex;flex-direction:column}.brandLockup small{display:block;font-size:8px;letter-spacing:1.6px;color:#667085;font-weight:800;margin-top:2px}.appBrand h1{margin:0;font-size:28px;line-height:1}.appBrand small{display:block;margin-top:5px;color:#667085}.tableAssignBtn{display:block;margin-top:10px;width:100%;padding:8px 10px;border:1px solid #d7c8f4;border-radius:8px;background:#f7f3ff;color:#53319c;font-weight:800;cursor:pointer}.tableAssignBtn:hover{background:#efe8ff}.readyHint{display:block;color:#12b76a;font-weight:700;margin-top:3px}
+
+:root{--pm-purple:#a020f0}.pmBrand{display:flex;align-items:center;gap:10px}.pmMark{width:58px;height:48px;color:#fff;flex:0 0 auto}.pmBrandCompact .pmMark{width:39px;height:33px}.pmWordmark{display:flex;flex-direction:column;line-height:1}.pmWordmark b{font-size:28px;letter-spacing:-.8px;color:#fff;font-weight:900}.pmWordmark strong{font-size:28px;letter-spacing:-.8px;color:var(--pm-purple);font-weight:900}.pmWordmark small{font-size:7px;letter-spacing:1.45px;color:#98a2b3;font-weight:800;margin-top:5px}.appBrand{display:flex;align-items:center;gap:9px}.appBrand h1{margin:0;font-size:20px;letter-spacing:-.4px}.appBrand small{display:block;margin-top:4px;color:#667085}.authBrand{display:flex;flex-direction:column;align-items:center;gap:7px;background:transparent}.authBrandTag{font-size:8px;letter-spacing:1.3px;color:#667085;font-weight:800}.controlBrandHeader{display:flex;align-items:center;gap:10px;margin-bottom:12px}.controlBrandHeader strong{font-size:18px}.controlBrandHeader small{display:block;color:#667085;margin-top:2px}
 `;
