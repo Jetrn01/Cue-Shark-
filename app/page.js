@@ -1220,8 +1220,8 @@ export default function Home() {
   {modal?.type==='playerdb'&&<PlayerDatabaseModal players={playerDB} currentPlayers={players} close={()=>setModal(null)} add={addExistingPlayerToCompetition} edit={(p)=>setModal({type:'masterPlayer',p})} deletePlayer={deleteMasterPlayer} newPlayer={()=>setModal({type:'masterPlayer',p:null})} profile={openPlayerProfile}/>}
   {modal?.type==='playerProfile'&&<PlayerProfileModal data={profileData} close={()=>setModal(null)} playerName={playerName}/>}
   {modal?.type==='draw'&&<DrawModal selected={selected} players={players} matches={matches} settings={drawSettings} setSettings={setDrawSettings} close={()=>setModal(null)} generate={generateDraw} generateGroups={generateGroupsReverseCrossover}/>}
-  {modal?.type==='masterPlayer'&&<MasterPlayerModal p={modal.p} allowAdd={!!selected} close={()=>setModal(null)} save={saveMasterPlayer}/>}
-  {modal?.type==='player'&&<PlayerModal p={modal.p} close={()=>setModal(null)} save={savePlayer}/>}
+  {modal?.type==='masterPlayer'&&<MasterPlayerModal p={modal.p} clubs={clubs} allowAdd={!!selected} close={()=>setModal(null)} save={saveMasterPlayer}/>}
+  {modal?.type==='player'&&<PlayerModal p={modal.p} clubs={clubs} close={()=>setModal(null)} save={savePlayer}/>}
   {modal?.type==='resultCorrection'&&<ResultCorrectionModal m={modal.m} close={()=>setModal(null)} save={correctMatchResult} playerName={playerName}/>}
   {modal?.type==='table'&&<TableModal t={modal.t} close={()=>setModal(null)} save={saveTable}/>}
   {modal?.type==='competition'&&<CompetitionModal c={modal.c} close={()=>setModal(null)} save={saveCompetition}/>}
