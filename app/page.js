@@ -782,16 +782,38 @@ export default function Home() {
       </div>
 
       <div className="controlSummary">
-        <div className="summaryPlaying"><strong>{activeMatches.length}</strong><span>Playing</span></div>
-        <div className="summaryReady"><strong>{ready.length}</strong><span>Ready to play</span></div>
+        <div className="summaryPlaying"><strong>{activeMatches.length}</strong><span>Playing now</span></div>
+        <div className="summaryReady"><strong>{ready.length}</strong><span>Ready next</span></div>
         <div><strong>{waiting.length}</strong><span>Waiting</span></div>
-        <div><strong>{available.length}</strong><span>Available tables</span></div>
+        <div><strong>{available.length}</strong><span>Tables free</span></div>
         <div><strong>{completed.length}</strong><span>Completed</span></div>
         <button onClick={()=>load(selected)}>↻ Refresh now</button>
         <button className="primary" onClick={assignNextReady} disabled={!ready.length || !available.length}>⚡ Assign next ready</button>
       </div>
 
+      <div className="commandProgress">
+        <div className="commandProgressTop">
+          <div><strong>Tournament progress</strong><span>{completed.length} of {matches.length} matches completed</span></div>
+          <strong>{matches.length ? Math.round((completed.length/matches.length)*100) : 0}%</strong>
+        </div>
+        <div className="progressTrack"><div className="progressFill" style={{width:`${matches.length ? Math.round((completed.length/matches.length)*100) : 0}%`}} /></div>
+      </div>
+
+      {(accessibleReady.length>0 || (ready.length>0 && available.length===0) || inaccessible.length>0) &&
+        <div className="attentionPanel">
+          <div className="attentionTitle">⚠️ Needs attention</div>
+          {accessibleReady.length>0 && eligibleAvailable(accessibleReady[0]).length===0 &&
+            <div className="attentionItem"><strong>♿ {accessibleReady.length} accessibility-priority match{accessibleReady.length===1?'':'es'}</strong><span>No suitable accessible table is currently available.</span></div>}
+          {ready.length>0 && available.length===0 &&
+            <div className="attentionItem"><strong>🎱 {ready.length} match{ready.length===1?' is':'es are'} ready</strong><span>All tables are currently occupied or unavailable.</span></div>}
+          {inaccessible.length>0 &&
+            <div className="attentionItem"><strong>🔧 {inaccessible.length} table{inaccessible.length===1?' is':'s are'} unavailable</strong><span>Check the table status if you need more capacity.</span></div>}
+        </div>}
+
       <div className="controlSectionHead">
+        <div><h4>What’s happening now</h4><span>Live table status and the match currently on each table.</span></div>
+      </div>
+      <div className="controlSectionHead controlTablesSubhead">
         <div><h4>Tables</h4><span>{tables.length} table{tables.length===1?'':'s'} configured{inaccessible.length?` · ${inaccessible.length} unavailable`:''}</span></div>
       </div>
 
@@ -965,8 +987,7 @@ export default function Home() {
         : <select value={m.table_id||''} onChange={e=>assign(m,e.target.value)} disabled={m.status==='completed'}><option value="">Unassigned</option>{tables.filter(t=>{if(t.status==='unavailable')return false;const needs=[m.player1_id,m.player2_id].some(pid=>players.find(x=>x.player_id===pid)?.players?.requires_accessible_table);return !needs || t.is_accessible;}).map(t=><option key={t.id} value={t.id}>Table {t.table_number}{t.is_accessible?' ♿':''}</option>)}</select>}
     </div>)}
   </Panel>
-  {matches.length>0 && <Panel title="Tournament Control">
-    <div className="controlBrandHeader"><PottersMateBrand compact/><div><strong>Tournament Control</strong><small>Run the night from one command centre.</small></div></div>
+  {matches.length>0 && <Panel title="Live Tournament Control">
     <TournamentControl tables={tables} matches={matches} playerName={playerName}/>
   </Panel>}
   {matches.length>0 && (selected.format||'').toLowerCase()==='knockout' && <Panel title="Knockout Bracket">
@@ -1306,5 +1327,8 @@ const css=`*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;ba
 .authBrandBox{background:#0b0d14;border-radius:14px;padding:18px 16px 15px;margin:-4px -4px 16px;text-align:center}.authBrandBox .pmBrand{justify-content:center}.authBrandBox .pmWordmark b,.authBrandBox .pmWordmark strong{font-size:30px}.authBrandTag{font-size:8px;letter-spacing:1.35px;color:#aeb6c6;font-weight:800;margin-top:7px}
 .nextUpPanel{margin-top:18px;border:1px solid #dfe4ec;border-radius:14px;background:#fff;overflow:hidden}.nextUpPanel .queueHead{padding:13px 15px;background:#f7f8fb;border-bottom:1px solid #e7eaf0}.nextUpGrid{display:grid;gap:0}.nextCard{display:grid;grid-template-columns:42px minmax(0,1fr) auto;gap:12px;align-items:center;padding:13px 15px;border-top:1px solid #edf0f4}.nextCard:first-child{border-top:0}.nextCard.priorityRow{background:#fffaf0}.nextNumber{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;background:#f2f4f7;color:#344054;font-weight:900}.nextDetails{display:grid;gap:2px;min-width:0}.nextDetails strong{font-size:14px}.nextDetails span{font-weight:700;color:#344054;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.nextDetails small{color:#667085}.nextAssign{white-space:nowrap}.nextWaiting{font-size:12px;color:#b54708;font-weight:700}.nextEmpty{padding:17px 15px;color:#667085}.controlCard{min-height:170px}.controlCard.isPlaying{box-shadow:0 0 0 2px #d7c8f4 inset}.controlScore{display:inline-block;margin-top:10px}
 @media(max-width:800px){.nextCard{grid-template-columns:34px minmax(0,1fr)}.nextAssign,.nextWaiting{grid-column:2;justify-self:start}.nextAssign{width:100%}}
+
+.commandProgress{margin-top:12px;padding:13px 15px;border:1px solid #e1e6ee;border-radius:12px;background:#fff}.commandProgressTop{display:flex;justify-content:space-between;align-items:end;gap:12px}.commandProgressTop div{display:grid;gap:2px}.commandProgressTop span{font-size:12px;color:#667085}.progressTrack{height:7px;border-radius:99px;background:#edf0f4;overflow:hidden;margin-top:9px}.progressFill{height:100%;border-radius:99px;background:var(--pm-purple);transition:width .3s ease}.attentionPanel{margin-top:12px;border:1px solid #f2d29a;border-radius:12px;background:#fffaf0;overflow:hidden}.attentionTitle{font-weight:900;padding:11px 14px;border-bottom:1px solid #f2d29a}.attentionItem{display:flex;justify-content:space-between;gap:15px;padding:9px 14px;border-top:1px solid #f7e3be;font-size:12px}.attentionItem:first-of-type{border-top:0}.attentionItem strong{color:#7a4b00}.attentionItem span{color:#8a5a10;text-align:right}.controlTablesSubhead{margin-top:13px}.controlTablesSubhead h4{margin-bottom:0}
+@media(max-width:800px){.attentionItem{display:grid;gap:3px}.attentionItem span{text-align:left}.commandProgressTop{align-items:center}}
 
 `;
