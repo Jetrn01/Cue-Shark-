@@ -745,20 +745,27 @@ export default function Home() {
     const mode=settings.group_knockout_mode||'group_crossover';
     if(mode==='group_crossover' && groupNames.length===5 && qualifiersPerGroup===3 && qualified.length===16){
       // Five groups / top 3 / one wildcard = 16-player Round of 16.
-      // Keep winners away from other winners: each group winner plays a
-      // different group's third-place qualifier. The second-place players
-      // are then cross-paired, with the wildcard taking one of those slots.
+      // Use a five-group reverse crossover: each group winner plays the
+      // third-place player from the next group, keeping all group winners
+      // apart and preventing same-group Round-of-16 matches.
+      // The five second-place players plus the wildcard fill the remaining
+      // three matches. The wildcard plays the second-place player from the
+      // next group, while the remaining four second-place players cross in
+      // reverse order. Once generated, these Round-of-16 positions are fixed.
       const q1=groupNames.map(g=>ranked[g][0]);
       const q2=groupNames.map(g=>ranked[g][1]);
       const q3=groupNames.map(g=>ranked[g][2]);
       for(let i=0;i<5;i++){
         firstPairs.push([q1[i]?.id||null,q3[(i+1)%5]?.id||null]);
       }
+
       const wildcard=qualified.find(p=>p.qualificationType==='wildcard');
       const wi=Math.max(0,groupNames.indexOf(wildcard?.group));
-      const opponent=(wi+1)%5;
-      firstPairs.push([q2[opponent]?.id||null,wildcard?.id||null]);
-      const remaining=q2.filter((_,i)=>i!==opponent);
+      const wildcardOpponent=(wi+1)%5;
+      firstPairs.push([q2[wildcardOpponent]?.id||null,wildcard?.id||null]);
+
+      const remaining=[];
+      for(let offset=2;offset<=4;offset++) remaining.push(q2[(wi+offset)%5]);
       firstPairs.push([remaining[0]?.id||null,remaining[2]?.id||null]);
       firstPairs.push([remaining[1]?.id||null,remaining[3]?.id||null]);
     } else if(mode==='group_crossover' && groupNames.length%2===0 && qualified.length===groupNames.length*qualifiersPerGroup){
