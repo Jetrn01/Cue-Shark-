@@ -48,8 +48,8 @@ export default function PublicTournament(){
   const results=useMemo(()=>matches.filter(m=>m.status==='completed').slice().reverse().slice(0,10),[matches]);
   const groups=useMemo(()=>{const gs=[...new Set(matches.filter(m=>m.group_name).map(m=>m.group_name))].sort();return gs.map(g=>({group:g,rows:standings(matches.filter(m=>m.group_name===g),players)}))},[matches,players]);
 
-  if(error)return <main className="publicPage"><Brand/><div className="publicCard"><h2>Unable to load tournament</h2><p>{error}</p></div></main>;
-  if(!c)return <main className="publicPage"><Brand/><div className="publicCard">Loading tournament…</div></main>;
+  if(error)return <main className="publicPage"><Brand/><div className="publicCard"><h2>Unable to load tournament</h2><p>{error}</p></div><style>{css}</style></main>;
+  if(!c)return <main className="publicPage"><Brand/><div className="publicCard">Loading tournament…</div><style>{css}</style></main>;
 
   return <main className="publicPage">
     <header className="publicHeader"><div><Brand/><h1>{c.name}</h1><p>{c.venue||''}{c.start_date?` · ${c.start_date}`:''}</p></div><a href={`/display/${id}`} target="_blank" rel="noreferrer">📺 TV Display</a></header>
@@ -69,7 +69,7 @@ export default function PublicTournament(){
       {results.length===0?<p className="muted">No completed matches yet.</p>:<div className="publicList">{results.map(m=><div className="publicRow" key={m.id}><strong>Match {m.match_number}</strong><span><a href={`/player/${m.player1_id}?competition=${id}`}>{playerName(players,m.player1_id)}</a> vs <a href={`/player/${m.player2_id}?competition=${id}`}>{playerName(players,m.player2_id)}</a></span><b>{m.score1??0} – {m.score2??0}</b><em>Winner: {playerName(players,m.winner_id)}</em></div>)}</div>}
     </section>
     <footer>PottersMate · Competition information updates automatically</footer>
-  </main>
+  <style>{css}</style></main>
 }
 
 function Brand(){return <div className="brand"><span className="mark">8</span><b>Potters<span>Mate</span></b></div>}
