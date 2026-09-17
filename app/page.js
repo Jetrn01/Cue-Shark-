@@ -868,7 +868,12 @@ export default function Home() {
   {msg&&<div className="notice">{msg}<button onClick={()=>setMsg('')}>✕</button></div>}
   <div className="layout"><aside><div className="asideTitle"><b>Competitions</b><button className="primary createBtn" onClick={()=>{setSelected(null);setModal({type:'competition',c:null})}}>＋ Create competition</button><button onClick={()=>setModal({type:'templates'})}>🔄 Recurring tournaments</button><button onClick={()=>setModal({type:'playerdb'})}>👥 Player database</button></div>{competitions.map(c=><button className={selected?.id===c.id?'sel':''} key={c.id} onClick={()=>load(c)}>{c.name}<small>{c.start_date||'Date TBC'} · {c.venue||''}</small></button>)}</aside>
   {!selected?<section className="empty"><h2>Select a competition</h2><p>Manage players, tables and match assignments.</p></section>:
-  <section className="content"><div className="hero"><div><h2>{selected.name}</h2><p>{selected.venue} · {selected.start_date||'Date TBC'}</p><div className="settingsSummary"><span><b>Format:</b> {selected.format||'Not set'}</span><span><b>Rules:</b> {selected.rules||'Not set'}</span><span><b>Default race:</b> Race to {selected.default_race_to||3}</span></div>{selected.recurring_template_id&&<div className="sessionBanner">{selected.session_type==='casual'?<><strong>🎱 Casual night</strong><span>Excluded from season standings</span></>:<><strong>🏆 Season week {selected.season_week||'?'}</strong><span>Counts toward season standings</span></>}</div>}</div><div className="heroRight"><button className="primary" onClick={()=>window.open(`/display/${selected.id}`,'_blank','noopener,noreferrer')}>📺 TV Display</button><button onClick={()=>setModal({type:'competition',c:selected})}>⚙️ Edit competition</button><button className="danger" onClick={deleteCompetition}>🗑️ Delete competition</button><div className="stats"><b>{players.length} players</b><b>{checked} checked in</b><b>{tables.length} tables</b></div></div></div>
+  <section className="content"><div className="hero"><div><h2>{selected.name}</h2><p>{selected.venue} · {selected.start_date||'Date TBC'}</p><div className="settingsSummary"><span><b>Format:</b> {selected.format||'Not set'}</span><span><b>Rules:</b> {selected.rules||'Not set'}</span><span><b>Default race:</b> Race to {selected.default_race_to||3}</span></div>
+<div className="tournamentStatusStrip">
+  <span className="phaseDot"></span>
+  <div><b>{matches.length===0?'Ready to set up':matches.some(m=>m.status==='in_progress'||m.status==='active')?'Tournament live':matches.some(m=>m.group_name && Number(m.round_number)===1 && m.status!=='completed')?'Group stage in progress':matches.some(m=>Number(m.round_number)>1 && m.status!=='completed' && m.status!=='bye')?'Knockout in progress':matches.length>0 && matches.every(m=>m.status==='completed'||m.status==='bye')?'Tournament complete':'Draw ready'}</b>
+  <small>{matches.length===0?'Add players, check them in, then create the draw.':`${matches.filter(m=>m.status==='completed').length} of ${matches.length} matches completed · ${players.length} players · ${tables.length} tables`}</small></div>
+</div>{selected.recurring_template_id&&<div className="sessionBanner">{selected.session_type==='casual'?<><strong>🎱 Casual night</strong><span>Excluded from season standings</span></>:<><strong>🏆 Season week {selected.season_week||'?'}</strong><span>Counts toward season standings</span></>}</div>}</div><div className="heroRight"><button className="primary" onClick={()=>window.open(`/display/${selected.id}`,'_blank','noopener,noreferrer')}>📺 TV Display</button><button onClick={()=>setModal({type:'competition',c:selected})}>⚙️ Edit competition</button><button className="danger" onClick={deleteCompetition}>🗑️ Delete competition</button><div className="stats"><b>{players.length} players</b><b>{checked} checked in</b><b>{tables.length} tables</b></div></div></div>
 
   {selected.recurring_template_id&&<Panel title="Season">
     <div className="seasonPanelIntro"><strong>{selected.session_type==='casual'?'🎱 Casual night':'🏆 Season session'}</strong><span>{selected.session_type==='casual'?'Results are saved in match history but excluded from season standings.':'Only season sessions count toward this recurring season.'}</span></div>
@@ -931,7 +936,7 @@ export default function Home() {
   {qrData&&<QRModal data={qrData} close={()=>setQrData(null)}/>}
   {modal?.type==='playerdb'&&<PlayerDatabaseModal players={playerDB} currentPlayers={players} close={()=>setModal(null)} add={addExistingPlayerToCompetition} edit={(p)=>setModal({type:'masterPlayer',p})} deletePlayer={deleteMasterPlayer} newPlayer={()=>setModal({type:'masterPlayer',p:null})} profile={openPlayerProfile}/>}
   {modal?.type==='playerProfile'&&<PlayerProfileModal data={profileData} close={()=>setModal(null)} playerName={playerName}/>}
-  {modal?.type==='draw'&&<DrawModal selected={selected} players={players} settings={drawSettings} setSettings={setDrawSettings} close={()=>setModal(null)} generate={generateDraw} generateGroups={generateGroupsReverseCrossover}/>}
+  {modal?.type==='draw'&&<DrawModal selected={selected} players={players} matches={matches} settings={drawSettings} setSettings={setDrawSettings} close={()=>setModal(null)} generate={generateDraw} generateGroups={generateGroupsReverseCrossover}/>}
   {modal?.type==='masterPlayer'&&<MasterPlayerModal p={modal.p} allowAdd={!!selected} close={()=>setModal(null)} save={saveMasterPlayer}/>}
   {modal?.type==='player'&&<PlayerModal p={modal.p} close={()=>setModal(null)} save={savePlayer}/>}
   {modal?.type==='table'&&<TableModal t={modal.t} close={()=>setModal(null)} save={saveTable}/>}
@@ -944,23 +949,26 @@ export default function Home() {
 }
 
 function Panel({title,add,addText,children}){return <div className="panel"><div className="ph"><h3>{title}</h3>{add&&<button className="primary" onClick={add}>{addText}</button>}</div>{children}</div>}
-function DrawModal({selected,players,settings,setSettings,close,generate,generateGroups}){
+function DrawModal({selected,players,matches=[],settings,setSettings,close,generate,generateGroups}){
   const checked=players.filter(p=>p.checked_in).length;
+  const drawLocked=matches.some(m=>['completed','in_progress','active'].includes(m.status));
   const maxEvenGroups=Math.min(8,Math.floor(checked/2));
   const groupOptions=[2,4,6,8].filter(n=>n<=maxEvenGroups);
   const isReverse=settings.type==='Groups → Reverse Crossover' || settings.type==='4 Groups of 4 → Reverse Crossover';
   const groupCount=groupOptions.includes(Number(settings.group_count))?Number(settings.group_count):(groupOptions[0]||2);
   return <Modal title="Draw Builder" close={close}>
     <p className="muted"><b>{checked}</b> checked-in players.</p>
-    <label>Draw type<select value={isReverse?'Groups → Reverse Crossover':settings.type} onChange={e=>setSettings({...settings,type:e.target.value})}>
+    <label>Draw type<select disabled={drawLocked} value={isReverse?'Groups → Reverse Crossover':settings.type} onChange={e=>setSettings({...settings,type:e.target.value})}>
       <option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Groups → Reverse Crossover</option>
     </select></label>
-    {isReverse && <label>Number of groups<select value={groupCount} onChange={e=>setSettings({...settings,group_count:Number(e.target.value),type:'Groups → Reverse Crossover'})}>
+    {isReverse && <label>Number of groups<select disabled={drawLocked} value={groupCount} onChange={e=>setSettings({...settings,group_count:Number(e.target.value),type:'Groups → Reverse Crossover'})}>
       {groupOptions.length?groupOptions.map(n=><option key={n} value={n}>{n} groups</option>):<option value="2">2 groups</option>}
     </select></label>}
-    <label>Race length<select value={settings.race_to} onChange={e=>setSettings({...settings,race_to:Number(e.target.value)})}>
+    <label>Race length<select disabled={drawLocked} value={settings.race_to} onChange={e=>setSettings({...settings,race_to:Number(e.target.value)})}>
       {[1,2,3,5,7,9].map(n=><option key={n} value={n}>Race to {n}</option>)}
     </select></label>
+    {drawLocked && <div className="drawLockedNote">🔒 <strong>Draw locked.</strong> Matches have already been completed or are in progress, so draw settings cannot be changed.</div>}
+    {!drawLocked && matches.length>0 && <div className="drawWarningNote">⚠️ <strong>Existing draw:</strong> generating again will replace the current scheduled draw. This is only available before play has started.</div>}
     <div className="settingNote">
       {settings.type==='Knockout'&&'Players are paired in the current checked-in order. Once generated, the bracket is fixed and winners progress automatically.'}
       {settings.type==='Round Robin'&&'Every checked-in player plays every other player once.'}
@@ -969,7 +977,7 @@ function DrawModal({selected,players,settings,setSettings,close,generate,generat
       {isReverse&&`Players are split as evenly as possible into ${groupCount} groups. After the group stage, groups are paired A vs B, C vs D, etc. Within each pair, 1st plays last, 2nd plays second-last, and so on. Odd or uneven crossover slots receive byes.`}
     </div>
     {isReverse && checked>=2 && <div className="drawPreviewNote"><strong>{checked} players:</strong> {groupCount} groups of about {Math.floor(checked/groupCount)}–{Math.ceil(checked/groupCount)} players. Any crossover byes will be shown in the generated draw.</div>}
-    <div className="ma"><button type="button" onClick={close}>Cancel</button><button className="primary" disabled={checked<2 || (isReverse && (groupOptions.length===0 || !groupOptions.includes(groupCount)))} onClick={()=>isReverse?generateGroups({...settings,type:'Groups → Reverse Crossover',group_count:groupCount}):generate(settings)}>Generate Draw</button></div>
+    <div className="ma"><button type="button" onClick={close}>Close</button><button className="primary" disabled={drawLocked || checked<2 || (isReverse && (groupOptions.length===0 || !groupOptions.includes(groupCount)))} onClick={()=>isReverse?generateGroups({...settings,type:'Groups → Reverse Crossover',group_count:groupCount}):generate(settings)}>{matches.length?'Regenerate Draw':'Generate Draw'}</button></div>
   </Modal>
 }
 
@@ -1247,4 +1255,6 @@ const css=`*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;ba
 @media(max-width:700px){.profileStats{grid-template-columns:repeat(3,1fr)}.profileTableHead,.profileTableRow{grid-template-columns:1.7fr .6fr .7fr .7fr .7fr}.profileMatch{align-items:flex-start}}
 
 .byeRow{background:#fafbfc}.byeBadge{display:inline-flex;align-items:center;border:1px solid #d8dee8;border-radius:999px;padding:6px 10px;font-size:11px;font-weight:800;color:#667085}.bracketBye{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px;border:1px dashed #d8dee8;border-radius:8px;background:#fafbfc}.bracketBye span{font-size:10px;font-weight:800;color:#667085}
+
+.tournamentStatusStrip{display:flex;align-items:center;gap:10px;margin-top:10px;padding:9px 11px;border:1px solid #dfe4ec;border-radius:10px;background:#fafbfc;max-width:620px}.tournamentStatusStrip b{display:block;color:#344054}.tournamentStatusStrip small{display:block;color:#667085;margin-top:2px}.phaseDot{width:9px;height:9px;border-radius:50%;background:#12b76a;flex:0 0 auto}.drawLockedNote{margin:10px 0;padding:10px 12px;border:1px solid #d0d5dd;border-radius:9px;background:#f2f4f7;color:#475467;font-size:12px}.drawWarningNote{margin:10px 0;padding:10px 12px;border:1px solid #fedf89;border-radius:9px;background:#fffaf0;color:#7a4b00;font-size:12px}
 `;
