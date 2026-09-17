@@ -108,6 +108,13 @@ function rankGroupPlayers(groupMatches){
   );
 }
 
+function qualificationPlan(groupCount, qualifiersPerGroup){
+  const automatic=Math.max(0, Number(groupCount||0)*Number(qualifiersPerGroup||0));
+  const targets=[2,4,8,16,32,64];
+  const target=targets.find(n=>n>=automatic) || (automatic>0 ? 2**Math.ceil(Math.log2(automatic)) : 0);
+  return {automatic,target,wildcards:Math.max(0,target-automatic)};
+}
+
 function groupKnockoutPairs(ranked, groupNames, mode='group_crossover'){
   const qualifiers=[];
   if(mode==='random'){
@@ -670,7 +677,8 @@ export default function Home() {
     const checkedPlayers=players.filter(p=>p.checked_in).map(p=>p.player_id).filter(Boolean);
     const groupCount=Number(settings.group_count||4);
     if(checkedPlayers.length<2){setMsg('Check in at least 2 players before creating groups.');return;}
-    if(groupCount<2 || groupCount%2!==0 || groupCount>Math.floor(checkedPlayers.length/2)){setMsg(`Choose an even number of groups between 2 and ${Math.floor(checkedPlayers.length/2)} for ${checkedPlayers.length} players.`);return;}
+    if(groupCount<2 || groupCount>Math.floor(checkedPlayers.length/2)){setMsg(`Choose between 2 and ${Math.floor(checkedPlayers.length/2)} groups for ${checkedPlayers.length} players.`);return;}
+    if(settings.type==='Groups → Reverse Crossover' && groupCount%2!==0){setMsg('Reverse Crossover requires an even number of groups. Use Groups → Knockout for 5 groups.');return;}
     if(matches.length){
       if(matches.some(m=>['completed','in_progress','active'].includes(m.status))){setMsg('This competition already has matches in progress or completed. A new draw cannot replace them.');return;}
       if(!window.confirm('Replace the existing draw? This removes the current scheduled matches and creates the new group-stage draw.'))return;
@@ -714,9 +722,9 @@ export default function Home() {
     // next knockout spot with the best player just outside the automatic
     // qualifying positions. The wildcard is decided by wins first, then the
     // highest cumulative signed ball differential.
-    const targetSizes=[2,4,8,16,32,64];
-    const targetSize=targetSizes.find(n=>n>=qualified.length)||2**Math.ceil(Math.log2(qualified.length));
-    const wildcardCount=Math.max(0,targetSize-qualified.length);
+    const plan=qualificationPlan(groupNames.length, qualifiersPerGroup);
+    const targetSize=plan.target;
+    const wildcardCount=plan.wildcards;
     if(wildcardCount>0){
       const candidates=[];
       groupNames.forEach(g=>{
@@ -726,12 +734,34 @@ export default function Home() {
       for(const candidate of candidates.slice(0,wildcardCount)){
         if(!qualified.some(q=>q.id===candidate.id)) qualified.push(candidate);
       }
+      if(qualified.length < targetSize){
+        setMsg(`There are not enough eligible non-qualifiers to fill the ${targetSize}-player knockout. Reduce the number of groups or qualifiers per group.`);
+        return;
+      }
     }
     if(qualified.length<2){setMsg('Not enough qualified players to create a knockout.');return;}
 
     let firstPairs=[];
     const mode=settings.group_knockout_mode||'group_crossover';
-    if(mode==='group_crossover' && groupNames.length%2===0 && qualified.length===groupNames.length*qualifiersPerGroup){
+    if(mode==='group_crossover' && groupNames.length===5 && qualifiersPerGroup===3 && qualified.length===16){
+      // Five groups / top 3 / one wildcard = 16-player Round of 16.
+      // Keep winners away from other winners: each group winner plays a
+      // different group's third-place qualifier. The second-place players
+      // are then cross-paired, with the wildcard taking one of those slots.
+      const q1=groupNames.map(g=>ranked[g][0]);
+      const q2=groupNames.map(g=>ranked[g][1]);
+      const q3=groupNames.map(g=>ranked[g][2]);
+      for(let i=0;i<5;i++){
+        firstPairs.push([q1[i]?.id||null,q3[(i+1)%5]?.id||null]);
+      }
+      const wildcard=qualified.find(p=>p.qualificationType==='wildcard');
+      const wi=Math.max(0,groupNames.indexOf(wildcard?.group));
+      const opponent=(wi+1)%5;
+      firstPairs.push([q2[opponent]?.id||null,wildcard?.id||null]);
+      const remaining=q2.filter((_,i)=>i!==opponent);
+      firstPairs.push([remaining[0]?.id||null,remaining[2]?.id||null]);
+      firstPairs.push([remaining[1]?.id||null,remaining[3]?.id||null]);
+    } else if(mode==='group_crossover' && groupNames.length%2===0 && qualified.length===groupNames.length*qualifiersPerGroup){
       for(let i=0;i<groupNames.length;i+=2){
         const left=groupNames[i], right=groupNames[i+1];
         const leftQ=ranked[left].slice(0,qualifiersPerGroup), rightQ=ranked[right].slice(0,qualifiersPerGroup);
@@ -788,7 +818,7 @@ export default function Home() {
     final.status=final.player1_id&&final.player2_id?'scheduled':final.status;
     const {error}=await supabase.from('competition_matches').insert(all);
     if(error){setMsg(`Could not create knockout: ${error.message}`);return;}
-    const wildcardText=wildcardCount>0?` plus ${Math.min(wildcardCount,qualified.length-groupNames.length*qualifiersPerGroup)} wildcard qualifier${wildcardCount===1?'':'s'} (most wins, then highest ball differential).`:'';
+    const wildcardText=wildcardCount>0?` plus ${wildcardCount} wildcard qualifier${wildcardCount===1?'':'s'} (most wins, then highest cumulative ball differential).`:'';
     await load(selected);setMsg(`Knockout created from ${qualified.length} qualifiers: top ${qualifiersPerGroup} from each of ${groupNames.length} groups${wildcardText}`);
   }
 
@@ -1248,7 +1278,7 @@ function GroupStandingsPanel({matches=[],playerName,qualifiers=4}){
         </div>
       })}
     </div>
-    <small className="muted">Ranking order: wins → cumulative ball differential (winner +N, loser −N) → frame difference → frames for. If a knockout needs an extra place, the best non-qualifier becomes the wildcard using wins, then highest ball differential.</small>
+    <small className="muted">Ranking order: wins → cumulative signed ball differential (winner +N, loser −N) → frame difference → frames for. If the next knockout field needs extra places, PottersMate selects wildcard qualifiers from the non-qualifiers using most wins, then highest cumulative ball differential.</small>
   </Panel>
 }
 
@@ -1256,7 +1286,7 @@ function DrawModal({selected,players,matches=[],settings,setSettings,close,gener
   const checked=players.filter(p=>p.checked_in).length;
   const drawLocked=matches.some(m=>['completed','in_progress','active'].includes(m.status));
   const maxEvenGroups=Math.min(8,Math.floor(checked/2));
-  const groupOptions=[2,4,6,8].filter(n=>n<=maxEvenGroups);
+  const groupOptions=[2,3,4,5,6,7,8].filter(n=>n<=Math.floor(checked/2));
   const isGroupsKO=settings.type==='Groups → Knockout';
   const isReverse=settings.type==='Groups → Reverse Crossover';
   const isGroups=isGroupsKO||isReverse;
@@ -1292,10 +1322,10 @@ function DrawModal({selected,players,matches=[],settings,setSettings,close,gener
       {settings.type==='Knockout'&&'Players are paired in the current checked-in order. Once generated, the bracket is fixed and winners progress automatically.'}
       {settings.type==='Round Robin'&&'Every checked-in player plays every other player once.'}
       {settings.type==='Random Draw'&&'Players are shuffled before the knockout draw.'}
-      {isGroupsKO&&`Group stage first: ${groupCount} groups, then the top ${qualifiers} from each group advance. ${knockoutSize} qualifiers will enter the fixed knockout bracket. Group crossover keeps the finish positions apart: A1 vs B${qualifiers}, A2 vs B${Math.max(1,qualifiers-1)}, etc.`}
+      {isGroupsKO&&`Group stage first: ${groupCount} groups, then the top ${qualifiers} from each group advance. PottersMate automatically calculates the next power-of-two knockout field and any wildcard places needed. Wildcards are ranked by most wins, then highest cumulative ball differential.`}
       {isReverse&&`Players are split as evenly as possible into ${groupCount} groups. After the group stage, groups are paired A vs B, C vs D, etc. Within each pair, 1st plays last, 2nd plays second-last, and so on.`}
     </div>
-    {isGroupsKO && checked>=2 && <div className="drawPreviewNote"><strong>{checked} players → {groupCount} groups → {knockoutSize} automatic qualifiers.</strong> Top {qualifiers} from every group advance. {(() => { const targets=[2,4,8,16,32,64]; const target=targets.find(n=>n>=knockoutSize)||2**Math.ceil(Math.log2(Math.max(2,knockoutSize))); const wc=target-knockoutSize; return wc>0 ? `${wc} wildcard${wc===1?'':'s'} fill the next knockout place${wc===1?'':'s'} using most wins, then highest cumulative ball differential.` : `${knockoutSize===16?'The next stage is the Round of 16.':`The next stage will have ${knockoutSize} qualifiers.`}`; })()}</div>}
+    {isGroupsKO && checked>=2 && <div className="drawPreviewNote">{(() => { const plan=qualificationPlan(groupCount,qualifiers); const stage=plan.target===16?'Round of 16':plan.target===8?'Quarter-final / 8-player knockout':plan.target===4?'4-player knockout':plan.target===32?'Round of 32':`${plan.target}-player knockout`; return <><strong>{checked} players → {groupCount} groups → {plan.automatic} automatic qualifiers.</strong> Top {qualifiers} from every group advance. {plan.wildcards>0 ? <>{plan.wildcards} wildcard{plan.wildcards===1?'':'s'} will be selected from the non-qualifiers using <strong>most wins → highest cumulative ball differential</strong>. Then {plan.target} players enter the {stage}.</> : <>No wildcard is required. The {plan.target}-player field proceeds directly to the {stage}.</>}</>; })()}</div>}
     {isReverse && checked>=2 && <div className="drawPreviewNote"><strong>{checked} players:</strong> {groupCount} groups of about {Math.floor(checked/groupCount)}–{Math.ceil(checked/groupCount)} players.</div>}
     <div className="ma"><button type="button" onClick={close}>Close</button><button className="primary" disabled={drawLocked || checked<2 || (isGroups && (groupOptions.length===0 || !groupOptions.includes(groupCount)))} onClick={()=>isGroups?generateGroups({...settings,type:isGroupsKO?'Groups → Knockout':'Groups → Reverse Crossover',group_count:groupCount,qualifiers_per_group:qualifiers,group_knockout_mode:settings.group_knockout_mode||'group_crossover'}):generate(settings)}>{matches.length?'Regenerate Draw':'Generate Draw'}</button></div>
   </Modal>
