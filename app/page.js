@@ -786,6 +786,9 @@ export default function Home() {
         {tables.length===0 ? <p className="muted">Add tables to see tournament control.</p> :
           tables.map(t=>{
             const state=tableState(t), active=state.active;
+            const nextForTable=!active && t.status!=='unavailable'
+              ? orderedReady.find(m=>!needsAccessible(m) || t.is_accessible)
+              : null;
             return <div className={`controlCard ${active?'isPlaying':''} ${t.is_accessible?'isAccessible':''}`} key={t.id}>
               <div className="controlTop">
                 <strong>Table {t.table_number}{t.is_accessible?' ♿':''}</strong>
@@ -801,7 +804,9 @@ export default function Home() {
               <div className="controlEmpty">
                 {t.status==='unavailable'
                   ? <><strong>Unavailable</strong>{t.notes&&<small>{t.notes}</small>}</>
-                  : <><strong>Ready for next match</strong>{t.notes&&<small>{t.notes}</small>}</>}
+                  : <><strong>Ready for next match</strong>{t.notes&&<small>{t.notes}</small>}
+                      {nextForTable && <button className="tableAssignBtn" onClick={()=>quickAssign(nextForTable,t)}>⚡ Assign Match {nextForTable.match_number}</button>}
+                    </>}
               </div>}
             </div>
           })
@@ -819,6 +824,7 @@ export default function Home() {
             <div className="readyInfo">
               <div><strong>#{index+1} · Match {m.match_number}</strong>{needsAccessible(m)&&<span className="priorityBadge small">♿ Priority</span>}</div>
               <span>{playerName(m.player1_id)} vs {playerName(m.player2_id)} · Race to {m.race_to}</span>
+              {options.length>0 && <small className="readyHint">Can be assigned now</small>}
               {!options.length && <small className="waitReason">{needsAccessible(m)?'Waiting for an accessible table.':'Waiting for an available table.'}</small>}
             </div>
             <div className="actions">
@@ -861,10 +867,10 @@ export default function Home() {
   }
 
 
-  if(!session)return <><style>{css}</style><main className="auth"><div className="card"><h1>🎱 PottersMate</h1><p>Competition management for cue-sport clubs.</p><form onSubmit={auth}><input type="email" placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)} required/><input type="password" placeholder="Password" value={password} onChange={e=>setPassword(e.target.value)} required/><button className="primary">{mode==='login'?'Log in':'Create organiser account'}</button></form>{authMsg&&<p className="error">{authMsg}</p>}<button className="link" onClick={()=>setMode(mode==='login'?'signup':'login')}>{mode==='login'?'Need an organiser account?':'Already have an account? Log in'}</button></div></main></>;
+  if(!session)return <><style>{css}</style><main className="auth"><div className="card"><div className="brandLockup"><span className="brandBall">8</span><span><b>Potters</b><strong>Mate</strong><small>TOURNAMENT CONTROL</small></span></div><p>Competition management for cue-sport clubs.</p><form onSubmit={auth}><input type="email" placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)} required/><input type="password" placeholder="Password" value={password} onChange={e=>setPassword(e.target.value)} required/><button className="primary">{mode==='login'?'Log in':'Create organiser account'}</button></form>{authMsg&&<p className="error">{authMsg}</p>}<button className="link" onClick={()=>setMode(mode==='login'?'signup':'login')}>{mode==='login'?'Need an organiser account?':'Already have an account? Log in'}</button></div></main></>;
 
   const checked=players.filter(p=>p.checked_in).length;
-  return <><style>{css}</style><header><div><h1>🎱 PottersMate</h1><small>Organiser Dashboard</small></div><button onClick={()=>supabase.auth.signOut()}>Log out</button></header>
+  return <><style>{css}</style><header><div className="appBrand"><span className="brandBall">8</span><span><h1><b>Potters</b><strong>Mate</strong></h1><small>Organiser Dashboard</small></span></div><button onClick={()=>supabase.auth.signOut()}>Log out</button></header>
   {msg&&<div className="notice">{msg}<button onClick={()=>setMsg('')}>✕</button></div>}
   <div className="layout"><aside><div className="asideTitle"><b>Competitions</b><button className="primary createBtn" onClick={()=>{setSelected(null);setModal({type:'competition',c:null})}}>＋ Create competition</button><button onClick={()=>setModal({type:'templates'})}>🔄 Recurring tournaments</button><button onClick={()=>setModal({type:'playerdb'})}>👥 Player database</button></div>{competitions.map(c=><button className={selected?.id===c.id?'sel':''} key={c.id} onClick={()=>load(c)}>{c.name}<small>{c.start_date||'Date TBC'} · {c.venue||''}</small></button>)}</aside>
   {!selected?<section className="empty"><h2>Select a competition</h2><p>Manage players, tables and match assignments.</p></section>:
@@ -1257,4 +1263,6 @@ const css=`*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;ba
 .byeRow{background:#fafbfc}.byeBadge{display:inline-flex;align-items:center;border:1px solid #d8dee8;border-radius:999px;padding:6px 10px;font-size:11px;font-weight:800;color:#667085}.bracketBye{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px;border:1px dashed #d8dee8;border-radius:8px;background:#fafbfc}.bracketBye span{font-size:10px;font-weight:800;color:#667085}
 
 .tournamentStatusStrip{display:flex;align-items:center;gap:10px;margin-top:10px;padding:9px 11px;border:1px solid #dfe4ec;border-radius:10px;background:#fafbfc;max-width:620px}.tournamentStatusStrip b{display:block;color:#344054}.tournamentStatusStrip small{display:block;color:#667085;margin-top:2px}.phaseDot{width:9px;height:9px;border-radius:50%;background:#12b76a;flex:0 0 auto}.drawLockedNote{margin:10px 0;padding:10px 12px;border:1px solid #d0d5dd;border-radius:9px;background:#f2f4f7;color:#475467;font-size:12px}.drawWarningNote{margin:10px 0;padding:10px 12px;border:1px solid #fedf89;border-radius:9px;background:#fffaf0;color:#7a4b00;font-size:12px}
+
+.brandLockup,.appBrand{display:flex;align-items:center;gap:11px}.brandBall{width:34px;height:34px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:#151d32;color:#fff;font-weight:900;font-size:17px;border:3px solid #eef1f6;box-shadow:0 2px 5px rgba(16,24,40,.16);flex:0 0 auto}.brandLockup b,.appBrand b{font-weight:900;color:#151d32}.brandLockup strong,.appBrand strong{font-weight:900;color:#6f42d9}.brandLockup span:last-child,.appBrand span:last-child{display:flex;flex-direction:column}.brandLockup small{display:block;font-size:8px;letter-spacing:1.6px;color:#667085;font-weight:800;margin-top:2px}.appBrand h1{margin:0;font-size:28px;line-height:1}.appBrand small{display:block;margin-top:5px;color:#667085}.tableAssignBtn{display:block;margin-top:10px;width:100%;padding:8px 10px;border:1px solid #d7c8f4;border-radius:8px;background:#f7f3ff;color:#53319c;font-weight:800;cursor:pointer}.tableAssignBtn:hover{background:#efe8ff}.readyHint{display:block;color:#12b76a;font-weight:700;margin-top:3px}
 `;
