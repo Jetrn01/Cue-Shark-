@@ -113,7 +113,7 @@ export default function Home() {
   const [templateTables,setTemplateTables]=useState([]);
   const [players,setPlayers]=useState([]),[tables,setTables]=useState([]),[matches,setMatches]=useState([]);
   const [modal,setModal]=useState(null),[msg,setMsg]=useState('');
-  const [drawSettings,setDrawSettings]=useState({type:'Knockout',race_to:3,group_count:4,knockout_seeding:'Seeded'});
+  const [drawSettings,setDrawSettings]=useState({type:'Knockout',race_to:3,group_count:4});
   const [qrData,setQrData]=useState(null);
   const [playerDB,setPlayerDB]=useState([]);
   const [profileData,setProfileData]=useState({player:null,matches:[],competitions:[],templates:[],loading:false});
@@ -459,20 +459,6 @@ export default function Home() {
     return p?.display_name || `${p?.first_name||''} ${p?.last_name||''}`.trim() || 'TBC';
   }
 
-  function seededBracketOrder(size){
-    if(size===1) return [1];
-    let order=[1,2];
-    for(let bracket=4;bracket<=size;bracket*=2){
-      const next=[];
-      for(const seed of order){
-        next.push(seed);
-        next.push(bracket+1-seed);
-      }
-      order=next;
-    }
-    return order;
-  }
-
   async function generateDraw(settings=drawSettings){
     if(!selected)return;
     const checkedPlayers=players.filter(p=>p.checked_in).map(p=>p.player_id).filter(Boolean);
@@ -490,16 +476,7 @@ export default function Home() {
 
     const race=Number(settings.race_to||selected.default_race_to||3);
     let ordered=[...checkedPlayers];
-    const knockoutSeeding=settings.knockout_seeding||'Seeded';
-    if(settings.type==='Random Draw' || (settings.type==='Knockout' && knockoutSeeding==='Random')) ordered.sort(()=>Math.random()-0.5);
-    if(settings.type==='Knockout' && knockoutSeeding==='Seeded'){
-      const size=2**Math.ceil(Math.log2(ordered.length));
-      const seeds=seededBracketOrder(size);
-      const seeded=seeds.map(seed=>ordered[seed-1]||null);
-      ordered=seeded.filter(Boolean);
-      // Keep explicit bye slots by storing the seeded positions separately below.
-      settings={...settings,__seededSlots:seeded};
-    }
+    if(settings.type==='Random Draw') ordered.sort(()=>Math.random()-0.5);
 
     if(settings.type==='Round Robin'){
       const rows=[]; let n=1;
@@ -522,10 +499,9 @@ export default function Home() {
       }
       byRound.push(arr);
     }
-    const firstSlots=settings.__seededSlots || ordered;
     for(let i=0;i<byRound[0].length;i++){
       const row=byRound[0][i];
-      row.player1_id=firstSlots[i*2]||null; row.player2_id=firstSlots[i*2+1]||null;
+      row.player1_id=ordered[i*2]||null; row.player2_id=ordered[i*2+1]||null;
       if(row.player1_id && row.player2_id) row.status='scheduled';
       else if(row.player1_id || row.player2_id){row.status='bye';row.winner_id=row.player1_id||row.player2_id;}
     }
@@ -566,7 +542,7 @@ export default function Home() {
 
     const {error}=await supabase.from('competition_matches').insert(byRound.flat());
     if(error){setMsg(`Could not create draw: ${error.message}`);return;}
-    await load(selected);setModal(null);setMsg(`${settings.type} draw created for ${checkedPlayers.length} players.`);
+    await load(selected);setModal(null);setMsg(`${settings.type} draw created for ${ordered.length} players.`);
   }
 
   async function generateGroupsReverseCrossover(settings=drawSettings){
@@ -958,13 +934,8 @@ function DrawModal({selected,players,settings,setSettings,close,generate,generat
   return <Modal title="Draw Builder" close={close}>
     <p className="muted"><b>{checked}</b> checked-in players.</p>
     <label>Draw type<select value={isReverse?'Groups → Reverse Crossover':settings.type} onChange={e=>setSettings({...settings,type:e.target.value})}>
-      <option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Seeded Draw</option><option>Groups → Reverse Crossover</option>
+      <option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Groups → Reverse Crossover</option>
     </select></label>
-    {settings.type==='Knockout' && <label>Knockout seeding<select value={settings.knockout_seeding||'Seeded'} onChange={e=>setSettings({...settings,knockout_seeding:e.target.value})}>
-      <option value="Seeded">Seeded — traditional bracket</option>
-      <option value="Random">Random</option>
-      <option value="Current">Current player order</option>
-    </select></label>}
     {isReverse && <label>Number of groups<select value={groupCount} onChange={e=>setSettings({...settings,group_count:Number(e.target.value),type:'Groups → Reverse Crossover'})}>
       {groupOptions.length?groupOptions.map(n=><option key={n} value={n}>{n} groups</option>):<option value="2">2 groups</option>}
     </select></label>}
@@ -972,12 +943,10 @@ function DrawModal({selected,players,settings,setSettings,close,generate,generat
       {[1,2,3,5,7,9].map(n=><option key={n} value={n}>Race to {n}</option>)}
     </select></label>
     <div className="settingNote">
-      {settings.type==='Knockout'&&settings.knockout_seeding==='Seeded'&&'Traditional bracket seeding. For 16 players: 1v16, 8v9, 4v13, 5v12, 2v15, 7v10, 3v14, 6v11.'}
-      {settings.type==='Knockout'&&settings.knockout_seeding==='Random'&&'Players are shuffled before being placed into the knockout bracket.'}
-      {settings.type==='Knockout'&&settings.knockout_seeding==='Current'&&'Players are paired in their current checked-in order.'}
+      {settings.type==='Knockout'&&'Players are paired in the current checked-in order. Once generated, the bracket is fixed and winners progress automatically.'}
       {settings.type==='Round Robin'&&'Every checked-in player plays every other player once.'}
       {settings.type==='Random Draw'&&'Players are shuffled before the knockout draw.'}
-      {settings.type==='Seeded Draw'&&'Players stay in their current checked-in order as the seed order.'}
+      {settings.type==='Seeded Draw'&&'The first round uses the checked-in player order. Once generated, bracket positions are fixed and winners progress automatically.'}
       {isReverse&&`Players are split as evenly as possible into ${groupCount} groups. After the group stage, groups are paired A vs B, C vs D, etc. Within each pair, 1st plays last, 2nd plays second-last, and so on. Odd or uneven crossover slots receive byes.`}
     </div>
     {isReverse && checked>=2 && <div className="drawPreviewNote"><strong>{checked} players:</strong> {groupCount} groups of about {Math.floor(checked/groupCount)}–{Math.ceil(checked/groupCount)} players. Any crossover byes will be shown in the generated draw.</div>}
@@ -1110,7 +1079,7 @@ function CompetitionModal({c,close,save}){
       <label>Venue<input value={f.venue} onChange={e=>setF({...f,venue:e.target.value})}/></label>
       <label>Date<input type="date" value={f.start_date||''} onChange={e=>setF({...f,start_date:e.target.value})}/></label>
       <label>Format<select value={f.format} onChange={e=>setF({...f,format:e.target.value})}>
-        <option>Singles</option><option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Seeded Draw</option><option>Groups → Reverse Crossover</option><option>Doubles</option><option>Teams</option><option>Custom</option>
+        <option>Singles</option><option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Groups → Reverse Crossover</option><option>Doubles</option><option>Teams</option><option>Custom</option>
       </select></label>
       <label>Rules<select value={f.rules} onChange={e=>setF({...f,rules:e.target.value})}><option>CNZ Rules</option><option>International Rules</option><option>Custom</option></select></label>
       <label>Default race length<select value={f.default_race_to} onChange={e=>setF({...f,default_race_to:Number(e.target.value)})}>{[1,2,3,5,7,9].map(n=><option key={n} value={n}>Race to {n}</option>)}</select></label>
@@ -1162,7 +1131,7 @@ function TemplateModal({t,close,save}){
       <label>Tournament name<input required value={f.name} placeholder="Thursday Night 8-Ball" onChange={e=>setF({...f,name:e.target.value})}/></label>
       <label>Venue<input value={f.venue} placeholder="Cambridge Cossie Club" onChange={e=>setF({...f,venue:e.target.value})}/></label>
       <label>Repeats every<select value={f.day_of_week} onChange={e=>setF({...f,day_of_week:Number(e.target.value)})}>{['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'].map((d,i)=><option key={d} value={i}>{d}</option>)}</select></label>
-      <label>Format<select value={f.format} onChange={e=>setF({...f,format:e.target.value})}><option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Seeded Draw</option><option>Groups → Reverse Crossover</option><option>Singles</option><option>Doubles</option><option>Teams</option><option>Custom</option></select></label>
+      <label>Format<select value={f.format} onChange={e=>setF({...f,format:e.target.value})}><option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Groups → Reverse Crossover</option><option>Singles</option><option>Doubles</option><option>Teams</option><option>Custom</option></select></label>
       <label>Rules<select value={f.rules} onChange={e=>setF({...f,rules:e.target.value})}><option>CNZ Rules</option><option>International Rules</option><option>Custom</option></select></label>
       <label>Default race length<select value={f.default_race_to} onChange={e=>setF({...f,default_race_to:Number(e.target.value)})}>{[1,2,3,5,7,9].map(n=><option key={n} value={n}>Race to {n}</option>)}</select></label>
       <label className="checkLine"><input type="checkbox" checked={f.season_enabled} onChange={e=>setF({...f,season_enabled:e.target.checked})}/> Run this as a season</label>
