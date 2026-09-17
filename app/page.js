@@ -70,6 +70,58 @@ function ReverseCrossoverPreview({players = [], groupCount = 2}) {
 }
 
 
+function rankGroupPlayers(groupMatches){
+  const standings={};
+  for(const m of groupMatches){
+    for(const id of [m.player1_id,m.player2_id]){
+      if(id && !standings[id]) standings[id]={id,wins:0,losses:0,ballDiff:0,for:0,against:0};
+    }
+    if(m.winner_id && standings[m.winner_id]) standings[m.winner_id].wins++;
+    const loserId=m.winner_id===m.player1_id?m.player2_id:(m.winner_id===m.player2_id?m.player1_id:null);
+    if(loserId && standings[loserId]) standings[loserId].losses++;
+
+    // For Race to 1, winner_balls is the number of balls remaining for the winner.
+    // The winner gets +N and the loser gets -N, giving every player a signed
+    // cumulative ball differential across the group stage.
+    if(Number(m.race_to)===1 && m.winner_id && m.winner_balls!==null && m.winner_balls!==undefined){
+      const n=Number(m.winner_balls)||0;
+      if(standings[m.winner_id]) standings[m.winner_id].ballDiff+=n;
+      if(loserId && standings[loserId]) standings[loserId].ballDiff-=n;
+    }
+
+    // Keep frame totals as a secondary informational statistic.
+    if(m.player1_id && standings[m.player1_id]){
+      standings[m.player1_id].for+=Number(m.score1||0);
+      standings[m.player1_id].against+=Number(m.score2||0);
+    }
+    if(m.player2_id && standings[m.player2_id]){
+      standings[m.player2_id].for+=Number(m.score2||0);
+      standings[m.player2_id].against+=Number(m.score1||0);
+    }
+  }
+  return Object.values(standings).sort((a,b)=>
+    b.wins-a.wins ||
+    b.ballDiff-a.ballDiff ||
+    (b.for-b.against)-(a.for-a.against) ||
+    b.for-a.for ||
+    a.id.localeCompare(b.id)
+  );
+}
+
+function groupKnockoutPairs(ranked, groupNames, mode='group_crossover'){
+  const qualifiers=[];
+  if(mode==='random'){
+    groupNames.forEach(g=>ranked[g].forEach((p,pos)=>qualifiers.push({...p,group:g,position:pos+1})));
+    qualifiers.sort(()=>Math.random()-0.5);
+    return qualifiers;
+  }
+  // Group crossover: A1 vs B4, A2 vs B3, etc.; C vs D, E vs F...
+  if(mode==='group_crossover') return qualifiers;
+  groupNames.forEach(g=>ranked[g].forEach((p,pos)=>qualifiers.push({...p,group:g,position:pos+1})));
+  return qualifiers;
+}
+
+
 function sessionScoreIncluded(value){
   return value !== 'casual';
 }
@@ -126,7 +178,7 @@ export default function Home() {
   const [templateTables,setTemplateTables]=useState([]);
   const [players,setPlayers]=useState([]),[tables,setTables]=useState([]),[matches,setMatches]=useState([]);
   const [modal,setModal]=useState(null),[msg,setMsg]=useState('');
-  const [drawSettings,setDrawSettings]=useState({type:'Knockout',race_to:3,group_count:4});
+  const [drawSettings,setDrawSettings]=useState({type:'Knockout',race_to:3,group_count:4,qualifiers_per_group:4,group_knockout_mode:'group_crossover'});
   const [qrData,setQrData]=useState(null);
   const [playerDB,setPlayerDB]=useState([]),[clubs,setClubs]=useState([]);
   const [profileData,setProfileData]=useState({player:null,matches:[],competitions:[],templates:[],loading:false});
@@ -635,7 +687,109 @@ export default function Home() {
     if(!rows.length){setMsg('Could not create group matches.');return;}
     const {error}=await supabase.from('competition_matches').insert(rows);
     if(error){setMsg(`Could not create group draw: ${error.message}`);return;}
-    await load(selected);setModal(null);setMsg(`${checkedPlayers.length} players placed into ${groupCount} balanced groups. Complete the group stage, then generate the Reverse Crossover.`);
+    await load(selected);setModal(null);setMsg(`${checkedPlayers.length} players placed into ${groupCount} balanced groups. Complete the group stage, then generate the ${settings.type==='Groups → Knockout'?'knockout from qualifiers':'Reverse Crossover'}.`);
+  }
+
+
+  async function generateGroupKnockout(settings=drawSettings){
+    if(!selected)return;
+    const groupMatches=matches.filter(m=>m.group_name && Number(m.round_number)===1);
+    if(!groupMatches.length){setMsg('Create the group stage first.');return;}
+    if(groupMatches.some(m=>m.status!=='completed')){setMsg('Complete all group-stage matches before generating the knockout.');return;}
+    if(matches.some(m=>Number(m.round_number)>1 && !m.group_name)){setMsg('The knockout stage has already been generated.');return;}
+
+    const groupNames=[...new Set(groupMatches.map(m=>m.group_name))].sort();
+    const qualifiersPerGroup=Math.max(1,Math.min(Number(settings.qualifiers_per_group||1), Math.min(...groupNames.map(g=>groupMatches.filter(m=>m.group_name===g).reduce((ids,m)=>{ids.add(m.player1_id);ids.add(m.player2_id);return ids;},new Set()).size))));
+    const ranked={};
+    for(const g of groupNames){
+      const rows=groupMatches.filter(m=>m.group_name===g);
+      ranked[g]=rankGroupPlayers(rows);
+      if(ranked[g].length<qualifiersPerGroup){setMsg(`Group ${g} does not contain enough players for ${qualifiersPerGroup} qualifiers.`);return;}
+    }
+
+    const qualified=[];
+    groupNames.forEach(g=>ranked[g].slice(0,qualifiersPerGroup).forEach((p,pos)=>qualified.push({...p,group:g,position:pos+1,qualificationType:'automatic'})));
+
+    // If the selected qualifiers do not make a power-of-two field, fill the
+    // next knockout spot with the best player just outside the automatic
+    // qualifying positions. The wildcard is decided by wins first, then the
+    // highest cumulative signed ball differential.
+    const targetSizes=[2,4,8,16,32,64];
+    const targetSize=targetSizes.find(n=>n>=qualified.length)||2**Math.ceil(Math.log2(qualified.length));
+    const wildcardCount=Math.max(0,targetSize-qualified.length);
+    if(wildcardCount>0){
+      const candidates=[];
+      groupNames.forEach(g=>{
+        ranked[g].slice(qualifiersPerGroup).forEach((p,pos)=>candidates.push({...p,group:g,position:qualifiersPerGroup+pos+1,qualificationType:'wildcard'}));
+      });
+      candidates.sort((a,b)=>b.wins-a.wins || b.ballDiff-a.ballDiff || (b.for-b.against)-(a.for-a.against) || b.for-a.for || a.id.localeCompare(b.id));
+      for(const candidate of candidates.slice(0,wildcardCount)){
+        if(!qualified.some(q=>q.id===candidate.id)) qualified.push(candidate);
+      }
+    }
+    if(qualified.length<2){setMsg('Not enough qualified players to create a knockout.');return;}
+
+    let firstPairs=[];
+    const mode=settings.group_knockout_mode||'group_crossover';
+    if(mode==='group_crossover' && groupNames.length%2===0 && qualified.length===groupNames.length*qualifiersPerGroup){
+      for(let i=0;i<groupNames.length;i+=2){
+        const left=groupNames[i], right=groupNames[i+1];
+        const leftQ=ranked[left].slice(0,qualifiersPerGroup), rightQ=ranked[right].slice(0,qualifiersPerGroup);
+        for(let pos=0;pos<qualifiersPerGroup;pos++){
+          firstPairs.push([leftQ[pos]?.id||null,rightQ[qualifiersPerGroup-1-pos]?.id||null]);
+        }
+      }
+    } else if(mode==='random'){
+      const shuffled=[...qualified].sort(()=>Math.random()-0.5).map(p=>p.id);
+      for(let i=0;i<shuffled.length;i+=2) firstPairs.push([shuffled[i]||null,shuffled[i+1]||null]);
+    } else {
+      // Seeded by group finish: preserve the qualification order and pair sequentially.
+      for(let i=0;i<qualified.length;i+=2) firstPairs.push([qualified[i]?.id||null,qualified[i+1]?.id||null]);
+    }
+
+    const race=Number(settings.race_to||selected.default_race_to||3);
+    let matchNo=Math.max(...matches.map(m=>m.match_number||0))+1;
+    const first=[];
+    for(const [p1,p2] of firstPairs){
+      first.push({id:crypto.randomUUID(),competition_id:selected.id,match_number:matchNo++,round_number:2,group_name:null,player1_id:p1,player2_id:p2,race_to:race,status:(p1&&p2)?'scheduled':'bye',score1:0,score2:0,table_id:null,next_match_id:null,next_slot:null,winner_id:(p1&&!p2)?p1:(!p1&&p2)?p2:null,loser_id:null});
+    }
+    const size=2**Math.ceil(Math.log2(first.length));
+    while(first.length<size) first.push({id:crypto.randomUUID(),competition_id:selected.id,match_number:matchNo++,round_number:2,group_name:null,player1_id:null,player2_id:null,race_to:race,status:'waiting',score1:0,score2:0,table_id:null,next_match_id:null,next_slot:null,winner_id:null,loser_id:null});
+
+    const rounds=[first]; let prev=first, roundNo=3;
+    while(prev.length>1){
+      const cur=[];
+      for(let i=0;i<prev.length/2;i++) cur.push({id:crypto.randomUUID(),competition_id:selected.id,match_number:matchNo++,round_number:roundNo,group_name:null,player1_id:null,player2_id:null,race_to:race,status:'waiting',score1:0,score2:0,table_id:null,next_match_id:null,next_slot:null,winner_id:null,loser_id:null});
+      rounds.push(cur);prev=cur;roundNo++;
+    }
+    for(let r=0;r<rounds.length-1;r++) for(let i=0;i<rounds[r].length;i++){
+      rounds[r][i].next_match_id=rounds[r+1][Math.floor(i/2)].id;
+      rounds[r][i].next_slot=(i%2)+1;
+    }
+    const possible=new Map(rounds[0].map(m=>[m.id,!!(m.player1_id||m.player2_id)]));
+    const all=rounds.flat();
+    for(let r=0;r<rounds.length-1;r++){
+      for(const feeder of rounds[r]) if(feeder.status==='bye'&&feeder.winner_id){
+        const target=all.find(x=>x.id===feeder.next_match_id);
+        if(target){if(feeder.next_slot===1)target.player1_id=feeder.winner_id;else target.player2_id=feeder.winner_id;}
+      }
+      for(const target of rounds[r+1]){
+        const feeders=rounds[r].filter(f=>f.next_match_id===target.id);
+        possible.set(target.id,feeders.some(f=>possible.get(f.id)));
+        if(target.player1_id&&target.player2_id){target.status='scheduled';continue;}
+        const sole=target.player1_id||target.player2_id;
+        if(!sole)continue;
+        const missingSlot=target.player1_id?2:1;
+        const missing=feeders.find(f=>f.next_slot===missingSlot);
+        if(missing&&!possible.get(missing.id)){target.status='bye';target.winner_id=sole;}
+      }
+    }
+    const final=rounds.at(-1)[0];
+    final.status=final.player1_id&&final.player2_id?'scheduled':final.status;
+    const {error}=await supabase.from('competition_matches').insert(all);
+    if(error){setMsg(`Could not create knockout: ${error.message}`);return;}
+    const wildcardText=wildcardCount>0?` plus ${Math.min(wildcardCount,qualified.length-groupNames.length*qualifiersPerGroup)} wildcard qualifier${wildcardCount===1?'':'s'} (most wins, then highest ball differential).`:'';
+    await load(selected);setMsg(`Knockout created from ${qualified.length} qualifiers: top ${qualifiersPerGroup} from each of ${groupNames.length} groups${wildcardText}`);
   }
 
   async function generateReverseCrossover(){
@@ -1033,10 +1187,12 @@ export default function Home() {
     {tables.map(t=><div className="row" key={t.id}><div><b>Table {t.table_number} {t.is_accessible?'♿':''}</b><small>{t.table_type||'Standard'} · {t.status||'available'}{t.notes?` · ${t.notes}`:''}</small></div><div className="actions"><select value={t.status||'available'} onChange={e=>saveTable({...t,status:e.target.value},t)}><option value="available">Available</option><option value="occupied">Occupied</option><option value="unavailable">Unavailable</option></select><button onClick={()=>setModal({type:'table',t})}>✏️ Edit</button><a className="scoreLink" href={`/score/${t.table_token||t.id}`} target="_blank" rel="noreferrer">📱 Scoring</a><button onClick={()=>showQR(t)}>▦ QR Code</button><button className="danger" onClick={()=>delTable(t)}>🗑️ Delete</button></div></div>)}
   </Panel>
 
+  {matches.some(m=>m.group_name)&&<GroupStandingsPanel matches={matches} playerName={playerName} qualifiers={Math.max(1,Number(drawSettings.qualifiers_per_group||4))}/>}
+
   <Panel title="Matches & Table Assignment">
     <div className="drawTools">
-      <button className="primary" onClick={()=>setModal({type:'draw'})}>🎱 {matches.length?'Edit / Regenerate Draw':'Create Draw'}</button>
-      {matches.some(m=>m.group_name)&&matches.filter(m=>m.group_name).every(m=>m.status==='completed')&&<button onClick={generateReverseCrossover} disabled={matches.some(m=>Number(m.round_number)>1 && !m.group_name)}>🏆 Generate Reverse Crossover</button>}
+      <button className="primary" onClick={()=>{if((selected.format||'').toLowerCase()==='groups → knockout')setDrawSettings(s=>({...s,type:'Groups → Knockout'}));else if((selected.format||'').toLowerCase()==='groups → reverse crossover')setDrawSettings(s=>({...s,type:'Groups → Reverse Crossover'}));setModal({type:'draw'})}}>🎱 {matches.length?'Edit / Regenerate Draw':'Create Draw'}</button>
+      {matches.some(m=>m.group_name)&&matches.filter(m=>m.group_name).every(m=>m.status==='completed')&&<>{(selected.format||'').toLowerCase()==='groups → knockout'?<button onClick={()=>generateGroupKnockout(drawSettings)} disabled={matches.some(m=>Number(m.round_number)>1 && !m.group_name)}>🏆 Generate {Math.max(2, Number(drawSettings.group_count||4))*Math.max(1,Number(drawSettings.qualifiers_per_group||4))===16?'Round of 16':'Knockout'} from qualifiers</button>:<button onClick={generateReverseCrossover} disabled={matches.some(m=>Number(m.round_number)>1 && !m.group_name)}>🏆 Generate Reverse Crossover</button>}</>}
       {matches.length===0&&<p className="muted">No matches created yet.</p>}
     </div>
     {matches.filter(m=>!(m.status==='waiting' && !m.player1_id && !m.player2_id)).map(m=><div className={`row ${m.status==='bye'?'byeRow':''}`} key={m.id}>
@@ -1077,21 +1233,56 @@ export default function Home() {
 }
 
 function Panel({title,add,addText,children}){return <div className="panel"><div className="ph"><h3>{title}</h3>{add&&<button className="primary" onClick={add}>{addText}</button>}</div>{children}</div>}
+function GroupStandingsPanel({matches=[],playerName,qualifiers=4}){
+  const groups=[...new Set(matches.filter(m=>m.group_name&&Number(m.round_number)===1).map(m=>m.group_name))].sort();
+  if(!groups.length)return null;
+  return <Panel title="Group standings">
+    <div className="groupStandingsGrid">
+      {groups.map(g=>{
+        const rows=rankGroupPlayers(matches.filter(m=>m.group_name===g));
+        return <div className="groupCard" key={g}>
+          <div className="groupCardHead"><strong>Group {g}</strong><span>Top {qualifiers} advance</span></div>
+          {rows.map((r,i)=><div className={`groupStandingRow ${i<qualifiers?'qualifier':''}`} key={r.id}>
+            <b>{i+1}</b><span>{playerName(r.id)}</span><strong>{r.wins}W</strong><small>{r.ballDiff>=0?`+${r.ballDiff}`:r.ballDiff} balls</small>
+          </div>)}
+        </div>
+      })}
+    </div>
+    <small className="muted">Ranking order: wins → cumulative ball differential (winner +N, loser −N) → frame difference → frames for. If a knockout needs an extra place, the best non-qualifier becomes the wildcard using wins, then highest ball differential.</small>
+  </Panel>
+}
+
 function DrawModal({selected,players,matches=[],settings,setSettings,close,generate,generateGroups}){
   const checked=players.filter(p=>p.checked_in).length;
   const drawLocked=matches.some(m=>['completed','in_progress','active'].includes(m.status));
   const maxEvenGroups=Math.min(8,Math.floor(checked/2));
   const groupOptions=[2,4,6,8].filter(n=>n<=maxEvenGroups);
-  const isReverse=settings.type==='Groups → Reverse Crossover' || settings.type==='4 Groups of 4 → Reverse Crossover';
+  const isGroupsKO=settings.type==='Groups → Knockout';
+  const isReverse=settings.type==='Groups → Reverse Crossover';
+  const isGroups=isGroupsKO||isReverse;
   const groupCount=groupOptions.includes(Number(settings.group_count))?Number(settings.group_count):(groupOptions[0]||2);
+  const maxGroupSize=groupCount>0?Math.ceil(checked/groupCount):0;
+  const qualifierOptions=Array.from({length:Math.max(1,maxGroupSize)},(_,i)=>i+1);
+  const qualifiers=Math.min(Number(settings.qualifiers_per_group)||Math.min(4,maxGroupSize||1),maxGroupSize||1);
+  const knockoutSize=groupCount*qualifiers;
   return <Modal title="Draw Builder" close={close}>
     <p className="muted"><b>{checked}</b> checked-in players.</p>
-    <label>Draw type<select disabled={drawLocked} value={isReverse?'Groups → Reverse Crossover':settings.type} onChange={e=>setSettings({...settings,type:e.target.value})}>
-      <option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Groups → Reverse Crossover</option>
+    <label>Draw type<select disabled={drawLocked} value={settings.type} onChange={e=>setSettings({...settings,type:e.target.value})}>
+      <option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Groups → Knockout</option><option>Groups → Reverse Crossover</option>
     </select></label>
-    {isReverse && <label>Number of groups<select disabled={drawLocked} value={groupCount} onChange={e=>setSettings({...settings,group_count:Number(e.target.value),type:'Groups → Reverse Crossover'})}>
+    {isGroups && <label>Number of groups<select disabled={drawLocked} value={groupCount} onChange={e=>setSettings({...settings,group_count:Number(e.target.value)})}>
       {groupOptions.length?groupOptions.map(n=><option key={n} value={n}>{n} groups</option>):<option value="2">2 groups</option>}
     </select></label>}
+    {isGroupsKO && <>
+      <label>Players advancing from each group<select disabled={drawLocked} value={qualifiers} onChange={e=>setSettings({...settings,qualifiers_per_group:Number(e.target.value)})}>
+        {qualifierOptions.map(n=><option key={n} value={n}>Top {n}</option>)}
+      </select></label>
+      <label>Knockout draw<select disabled={drawLocked} value={settings.group_knockout_mode||'group_crossover'} onChange={e=>setSettings({...settings,group_knockout_mode:e.target.value})}>
+        <option value="group_crossover">Group crossover — A1 vs B4, A2 vs B3</option>
+        <option value="seeded">Seeded qualification order</option>
+        <option value="random">Randomise qualifiers</option>
+      </select></label>
+    </>}
     <label>Race length<select disabled={drawLocked} value={settings.race_to} onChange={e=>setSettings({...settings,race_to:Number(e.target.value)})}>
       {[1,2,3,5,7,9].map(n=><option key={n} value={n}>Race to {n}</option>)}
     </select></label>
@@ -1101,11 +1292,12 @@ function DrawModal({selected,players,matches=[],settings,setSettings,close,gener
       {settings.type==='Knockout'&&'Players are paired in the current checked-in order. Once generated, the bracket is fixed and winners progress automatically.'}
       {settings.type==='Round Robin'&&'Every checked-in player plays every other player once.'}
       {settings.type==='Random Draw'&&'Players are shuffled before the knockout draw.'}
-      {settings.type==='Seeded Draw'&&'The first round uses the checked-in player order. Once generated, bracket positions are fixed and winners progress automatically.'}
-      {isReverse&&`Players are split as evenly as possible into ${groupCount} groups. After the group stage, groups are paired A vs B, C vs D, etc. Within each pair, 1st plays last, 2nd plays second-last, and so on. Odd or uneven crossover slots receive byes.`}
+      {isGroupsKO&&`Group stage first: ${groupCount} groups, then the top ${qualifiers} from each group advance. ${knockoutSize} qualifiers will enter the fixed knockout bracket. Group crossover keeps the finish positions apart: A1 vs B${qualifiers}, A2 vs B${Math.max(1,qualifiers-1)}, etc.`}
+      {isReverse&&`Players are split as evenly as possible into ${groupCount} groups. After the group stage, groups are paired A vs B, C vs D, etc. Within each pair, 1st plays last, 2nd plays second-last, and so on.`}
     </div>
-    {isReverse && checked>=2 && <div className="drawPreviewNote"><strong>{checked} players:</strong> {groupCount} groups of about {Math.floor(checked/groupCount)}–{Math.ceil(checked/groupCount)} players. Any crossover byes will be shown in the generated draw.</div>}
-    <div className="ma"><button type="button" onClick={close}>Close</button><button className="primary" disabled={drawLocked || checked<2 || (isReverse && (groupOptions.length===0 || !groupOptions.includes(groupCount)))} onClick={()=>isReverse?generateGroups({...settings,type:'Groups → Reverse Crossover',group_count:groupCount}):generate(settings)}>{matches.length?'Regenerate Draw':'Generate Draw'}</button></div>
+    {isGroupsKO && checked>=2 && <div className="drawPreviewNote"><strong>{checked} players → {groupCount} groups → {knockoutSize} automatic qualifiers.</strong> Top {qualifiers} from every group advance. {(() => { const targets=[2,4,8,16,32,64]; const target=targets.find(n=>n>=knockoutSize)||2**Math.ceil(Math.log2(Math.max(2,knockoutSize))); const wc=target-knockoutSize; return wc>0 ? `${wc} wildcard${wc===1?'':'s'} fill the next knockout place${wc===1?'':'s'} using most wins, then highest cumulative ball differential.` : `${knockoutSize===16?'The next stage is the Round of 16.':`The next stage will have ${knockoutSize} qualifiers.`}`; })()}</div>}
+    {isReverse && checked>=2 && <div className="drawPreviewNote"><strong>{checked} players:</strong> {groupCount} groups of about {Math.floor(checked/groupCount)}–{Math.ceil(checked/groupCount)} players.</div>}
+    <div className="ma"><button type="button" onClick={close}>Close</button><button className="primary" disabled={drawLocked || checked<2 || (isGroups && (groupOptions.length===0 || !groupOptions.includes(groupCount)))} onClick={()=>isGroups?generateGroups({...settings,type:isGroupsKO?'Groups → Knockout':'Groups → Reverse Crossover',group_count:groupCount,qualifiers_per_group:qualifiers,group_knockout_mode:settings.group_knockout_mode||'group_crossover'}):generate(settings)}>{matches.length?'Regenerate Draw':'Generate Draw'}</button></div>
   </Modal>
 }
 
@@ -1222,7 +1414,7 @@ function CompetitionModal({c,close,save}){
       <label>Venue<input value={f.venue} onChange={e=>setF({...f,venue:e.target.value})}/></label>
       <label>Date<input type="date" value={f.start_date||''} onChange={e=>setF({...f,start_date:e.target.value})}/></label>
       <label>Format<select value={f.format} onChange={e=>setF({...f,format:e.target.value})}>
-        <option>Singles</option><option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Groups → Reverse Crossover</option><option>Doubles</option><option>Teams</option><option>Custom</option>
+        <option>Singles</option><option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Groups → Reverse Crossover</option><option>Groups → Knockout</option><option>Doubles</option><option>Teams</option><option>Custom</option>
       </select></label>
       <label>Rules<select value={f.rules} onChange={e=>setF({...f,rules:e.target.value})}><option>CNZ Rules</option><option>International Rules</option><option>Custom</option></select></label>
       <label>Default race length<select value={f.default_race_to} onChange={e=>setF({...f,default_race_to:Number(e.target.value)})}>{[1,2,3,5,7,9].map(n=><option key={n} value={n}>Race to {n}</option>)}</select></label>
@@ -1274,7 +1466,7 @@ function TemplateModal({t,close,save}){
       <label>Tournament name<input required value={f.name} placeholder="Thursday Night 8-Ball" onChange={e=>setF({...f,name:e.target.value})}/></label>
       <label>Venue<input value={f.venue} placeholder="Cambridge Cossie Club" onChange={e=>setF({...f,venue:e.target.value})}/></label>
       <label>Repeats every<select value={f.day_of_week} onChange={e=>setF({...f,day_of_week:Number(e.target.value)})}>{['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'].map((d,i)=><option key={d} value={i}>{d}</option>)}</select></label>
-      <label>Format<select value={f.format} onChange={e=>setF({...f,format:e.target.value})}><option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Groups → Reverse Crossover</option><option>Singles</option><option>Doubles</option><option>Teams</option><option>Custom</option></select></label>
+      <label>Format<select value={f.format} onChange={e=>setF({...f,format:e.target.value})}><option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Groups → Reverse Crossover</option><option>Groups → Knockout</option><option>Singles</option><option>Doubles</option><option>Teams</option><option>Custom</option></select></label>
       <label>Rules<select value={f.rules} onChange={e=>setF({...f,rules:e.target.value})}><option>CNZ Rules</option><option>International Rules</option><option>Custom</option></select></label>
       <label>Default race length<select value={f.default_race_to} onChange={e=>setF({...f,default_race_to:Number(e.target.value)})}>{[1,2,3,5,7,9].map(n=><option key={n} value={n}>Race to {n}</option>)}</select></label>
       <label className="checkLine"><input type="checkbox" checked={f.season_enabled} onChange={e=>setF({...f,season_enabled:e.target.checked})}/> Run this as a season</label>
@@ -1312,7 +1504,7 @@ function ResultCorrectionModal({m,close,save,playerName}){
 function TableModal({t,close,save}){const[f,setF]=useState({table_number:t?.table_number||'',table_type:t?.table_type||'Standard',notes:t?.notes||'',is_accessible:!!t?.is_accessible,status:t?.status||'available'});return <Modal title={t?'Edit table':'Add table'} close={close}><form onSubmit={e=>{e.preventDefault();save(f,t)}}><label>Table number<input required type="number" min="1" value={f.table_number} onChange={e=>setF({...f,table_number:e.target.value})}/></label><label>Table type<select value={f.table_type} onChange={e=>setF({...f,table_type:e.target.value})}><option>Standard</option><option>Accessible</option><option>Reserved / Unavailable</option></select></label><label className="check"><input type="checkbox" checked={f.is_accessible} onChange={e=>setF({...f,is_accessible:e.target.checked})}/> Accessible table ♿</label><label>Table notes<textarea value={f.notes} onChange={e=>setF({...f,notes:e.target.value})}/></label><div className="ma"><button type="button" onClick={close}>Cancel</button><button className="primary">Save</button></div></form></Modal>}
 
 
-const css=`*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:#f5f7fa;color:#172033}button,input,select,textarea{font:inherit}button{cursor:pointer;border:1px solid #d8dee8;background:#fff;border-radius:8px;padding:9px 12px}.primary{background:#172033;color:#fff;border-color:#172033}.danger{color:#b42318}.link{border:0;background:none;color:#315fdb}.auth{min-height:100vh;display:grid;place-items:center}.card{background:#fff;padding:36px;border-radius:18px;box-shadow:0 12px 40px #0001;width:min(430px,92vw)}.card form{display:grid;gap:12px}.card input{padding:12px;border:1px solid #ccd3df;border-radius:8px}.error{color:#b42318}header{background:#fff;border-bottom:1px solid #e4e8ef;padding:15px 24px;display:flex;justify-content:space-between;align-items:center}header h1{margin:0;font-size:25px}.layout{display:grid;grid-template-columns:260px 1fr;max-width:1400px;margin:auto;min-height:calc(100vh - 72px)}aside{background:#fff;border-right:1px solid #e4e8ef;padding:15px}.asideTitle{display:flex;flex-direction:column;gap:10px;margin-bottom:10px}.createBtn{width:100%;font-weight:700}aside button{display:block;width:100%;text-align:left;border:0;margin-top:6px}aside small{display:block;color:#758096;margin-top:4px}.sel{background:#eef2ff}.content{padding:22px;max-width:1100px}.hero{background:#fff;border:1px solid #e3e7ee;border-radius:14px;padding:20px;display:flex;justify-content:space-between;margin-bottom:18px}.hero h2{margin:0 0 6px}.hero p{margin:0;color:#6a7587}.heroRight{display:flex;flex-direction:column;align-items:flex-end;gap:12px}.settingsSummary{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px;color:#667085;font-size:13px}.settingsSummary span{background:#f5f7fa;padding:7px 9px;border-radius:7px}.dbTop{display:flex;gap:8px;margin-bottom:10px}.dbTop input{flex:1}.dbList{max-height:55vh;overflow:auto}.settingNote{background:#f5f7fa;border:1px solid #e3e7ee;border-radius:8px;padding:10px;color:#667085;font-size:13px;line-height:1.4}.stats{display:flex;gap:15px;align-items:center;flex-wrap:wrap}.stats b{background:#f5f7fa;padding:10px 12px;border-radius:8px}.panel{background:#fff;border:1px solid #e3e7ee;border-radius:14px;margin-bottom:18px;padding:16px}.ph{display:flex;justify-content:space-between;align-items:center}.ph h3{margin:0}.row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid #edf0f4}.row small{display:block;color:#707b8d;margin-top:4px}.actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap}.qr{border:1px dashed #aab3c2;border-radius:6px;padding:8px;text-align:center;font-size:11px}.qrLarge{display:flex;justify-content:center;align-items:center;padding:8px}.qrLarge img{width:320px;height:320px;max-width:100%;image-rendering:auto}.scoreLink{padding:9px 12px;border:1px solid #d8dee8;border-radius:8px;text-decoration:none;color:#172033;background:#fff}.muted{color:#778194}.drawTools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}.empty{padding:70px 30px}.notice{margin:14px auto;padding:10px 14px;background:#fff4e5;border:1px solid #ffd7a3;width:94%;border-radius:8px}.notice button{float:right;padding:2px 7px}.backdrop{position:fixed;inset:0;background:#0006;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:18px}.modal{background:#fff;width:min(520px,95vw);max-height:calc(100vh - 36px);overflow-y:auto;border-radius:14px;padding:18px;margin:auto 0}.mh{display:flex;justify-content:space-between;align-items:center}.modal form{display:grid;gap:12px}.modal label{display:grid;gap:5px;font-weight:600}.modal input,.modal select,.modal textarea{padding:10px;border:1px solid #ccd3df;border-radius:8px}.modal textarea{min-height:80px}.check{display:flex!important;align-items:center;gap:8px}.ma{display:flex;justify-content:flex-end;gap:8px}@media(max-width:850px){.heroRight{align-items:flex-start;margin-top:15px}.layout{grid-template-columns:1fr}aside{border-right:0;border-bottom:1px solid #e4e8ef}.hero{display:block}.row{flex-direction:column;align-items:flex-start}.actions{width:100%}}
+const css=`*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:#f5f7fa;color:#172033}button,input,select,textarea{font:inherit}button{cursor:pointer;border:1px solid #d8dee8;background:#fff;border-radius:8px;padding:9px 12px}.primary{background:#172033;color:#fff;border-color:#172033}.danger{color:#b42318}.link{border:0;background:none;color:#315fdb}.auth{min-height:100vh;display:grid;place-items:center}.card{background:#fff;padding:36px;border-radius:18px;box-shadow:0 12px 40px #0001;width:min(430px,92vw)}.card form{display:grid;gap:12px}.card input{padding:12px;border:1px solid #ccd3df;border-radius:8px}.error{color:#b42318}header{background:#fff;border-bottom:1px solid #e4e8ef;padding:15px 24px;display:flex;justify-content:space-between;align-items:center}header h1{margin:0;font-size:25px}.layout{display:grid;grid-template-columns:260px 1fr;max-width:1400px;margin:auto;min-height:calc(100vh - 72px)}aside{background:#fff;border-right:1px solid #e4e8ef;padding:15px}.asideTitle{display:flex;flex-direction:column;gap:10px;margin-bottom:10px}.createBtn{width:100%;font-weight:700}aside button{display:block;width:100%;text-align:left;border:0;margin-top:6px}aside small{display:block;color:#758096;margin-top:4px}.sel{background:#eef2ff}.content{padding:22px;max-width:1100px}.hero{background:#fff;border:1px solid #e3e7ee;border-radius:14px;padding:20px;display:flex;justify-content:space-between;margin-bottom:18px}.hero h2{margin:0 0 6px}.hero p{margin:0;color:#6a7587}.heroRight{display:flex;flex-direction:column;align-items:flex-end;gap:12px}.settingsSummary{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px;color:#667085;font-size:13px}.settingsSummary span{background:#f5f7fa;padding:7px 9px;border-radius:7px}.dbTop{display:flex;gap:8px;margin-bottom:10px}.dbTop input{flex:1}.dbList{max-height:55vh;overflow:auto}.settingNote{background:#f5f7fa;border:1px solid #e3e7ee;border-radius:8px;padding:10px;color:#667085;font-size:13px;line-height:1.4}.stats{display:flex;gap:15px;align-items:center;flex-wrap:wrap}.stats b{background:#f5f7fa;padding:10px 12px;border-radius:8px}.panel{background:#fff;border:1px solid #e3e7ee;border-radius:14px;margin-bottom:18px;padding:16px}.ph{display:flex;justify-content:space-between;align-items:center}.ph h3{margin:0}.row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid #edf0f4}.row small{display:block;color:#707b8d;margin-top:4px}.actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap}.qr{border:1px dashed #aab3c2;border-radius:6px;padding:8px;text-align:center;font-size:11px}.qrLarge{display:flex;justify-content:center;align-items:center;padding:8px}.qrLarge img{width:320px;height:320px;max-width:100%;image-rendering:auto}.scoreLink{padding:9px 12px;border:1px solid #d8dee8;border-radius:8px;text-decoration:none;color:#172033;background:#fff}.muted{color:#778194}.drawTools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}.empty{padding:70px 30px}.notice{margin:14px auto;padding:10px 14px;background:#fff4e5;border:1px solid #ffd7a3;width:94%;border-radius:8px}.notice button{float:right;padding:2px 7px}.backdrop{position:fixed;inset:0;background:#0006;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:18px}.modal{background:#fff;width:min(520px,95vw);max-height:calc(100vh - 36px);overflow-y:auto;border-radius:14px;padding:18px;margin:auto 0}.mh{display:flex;justify-content:space-between;align-items:center}.modal form{display:grid;gap:12px}.modal label{display:grid;gap:5px;font-weight:600}.modal input,.modal select,.modal textarea{padding:10px;border:1px solid #ccd3df;border-radius:8px}.modal textarea{min-height:80px}.check{display:flex!important;align-items:center;gap:8px}.ma{display:flex;justify-content:flex-end;gap:8px}.groupStandingsGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}.groupCard{border:1px solid #e3e7ee;border-radius:10px;overflow:hidden;background:#fff}.groupCardHead{display:flex;justify-content:space-between;gap:8px;padding:10px 12px;background:#f8fafc;border-bottom:1px solid #e3e7ee}.groupCardHead span{font-size:12px;color:#667085}.groupStandingRow{display:grid;grid-template-columns:24px 1fr 34px 42px;gap:6px;align-items:center;padding:8px 12px;border-bottom:1px solid #edf0f4;font-size:13px}.groupStandingRow:last-child{border-bottom:0}.groupStandingRow.qualifier{background:#f7f4ff}.groupStandingRow small{color:#667085;text-align:right}.groupStandingRow span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}@media(max-width:850px){.heroRight{align-items:flex-start;margin-top:15px}.layout{grid-template-columns:1fr}aside{border-right:0;border-bottom:1px solid #e4e8ef}.hero{display:block}.row{flex-direction:column;align-items:flex-start}.actions{width:100%}}
 .controlIntro{display:flex;justify-content:space-between;gap:14px;align-items:center;background:#f7f8fb;border:1px solid #e3e7ee;border-radius:12px;padding:13px 15px;margin:10px 0 14px}
 .controlIntro strong{display:block}.controlIntro span{display:block;color:#667085;font-size:13px;margin-top:3px}.liveBadge{font-size:11px!important;font-weight:800;color:#087443!important;background:#ecfdf3;border:1px solid #abefc6;border-radius:999px;padding:6px 9px;white-space:nowrap}
 .controlSummary{display:flex;gap:10px;align-items:stretch;flex-wrap:wrap;margin:10px 0 18px}
