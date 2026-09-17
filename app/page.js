@@ -826,6 +826,27 @@ export default function Home() {
         }
       </div>
 
+      <div className="nextUpPanel">
+        <div className="queueHead">
+          <div><h4>Next up</h4><span>The next matches PottersMate is ready to put on a table.</span></div>
+          <span className="countBadge">{orderedReady.length}</span>
+        </div>
+        {orderedReady.length===0
+          ? <div className="nextEmpty">{matches.length && matches.every(m=>m.status==='completed'||m.status==='bye') ? '🏆 Tournament complete.' : 'Waiting for the next match to become ready.'}</div>
+          : <div className="nextUpGrid">{orderedReady.slice(0,3).map((m,index)=>{
+              const options=eligibleAvailable(m);
+              return <div className={`nextCard ${needsAccessible(m)?'priorityRow':''}`} key={m.id}>
+                <div className="nextNumber">#{index+1}</div>
+                <div className="nextDetails">
+                  <strong>Match {m.match_number}</strong>
+                  <span>{playerName(m.player1_id)} <b>vs</b> {playerName(m.player2_id)}</span>
+                  <small>Race to {m.race_to}{needsAccessible(m)?' · ♿ Accessible table required':''}</small>
+                </div>
+                {options[0] ? <button className="primary nextAssign" onClick={()=>quickAssign(m,options[0])}>⚡ Assign Table {options[0].table_number}</button> : <span className="nextWaiting">{needsAccessible(m)?'Waiting for accessible table':'Waiting for a table'}</span>}
+              </div>
+            })}</div>}
+      </div>
+
       {orderedReady.length>0 && <div className="readyQueue">
         <div className="queueHead">
           <div><h4>Ready to play</h4><span>Matches are ordered with accessibility-required players first.</span></div>
@@ -1283,4 +1304,7 @@ const css=`*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;ba
 :root{--pm-purple:#a020f0}.pmBrand{display:flex;align-items:center;gap:10px}.pmMark{width:58px;height:48px;color:#fff;flex:0 0 auto}.pmBrandCompact .pmMark{width:39px;height:33px}.pmWordmark{display:flex;flex-direction:column;line-height:1}.pmWordmark b{font-size:28px;letter-spacing:-.8px;color:#fff;font-weight:900}.pmWordmark strong{font-size:28px;letter-spacing:-.8px;color:var(--pm-purple);font-weight:900}.pmWordmark small{font-size:7px;letter-spacing:1.45px;color:#98a2b3;font-weight:800;margin-top:5px}.appBrand{display:flex;align-items:center;gap:9px}.appBrand h1{margin:0;font-size:20px;letter-spacing:-.4px}.appBrand small{display:block;margin-top:4px;color:#667085}.authBrand{display:flex;flex-direction:column;align-items:center;gap:7px;background:transparent}.authBrandTag{font-size:8px;letter-spacing:1.3px;color:#667085;font-weight:800}.controlBrandHeader{display:flex;align-items:center;gap:10px;margin-bottom:12px}.controlBrandHeader strong{font-size:18px}.controlBrandHeader small{display:block;color:#667085;margin-top:2px}
 
 .authBrandBox{background:#0b0d14;border-radius:14px;padding:18px 16px 15px;margin:-4px -4px 16px;text-align:center}.authBrandBox .pmBrand{justify-content:center}.authBrandBox .pmWordmark b,.authBrandBox .pmWordmark strong{font-size:30px}.authBrandTag{font-size:8px;letter-spacing:1.35px;color:#aeb6c6;font-weight:800;margin-top:7px}
+.nextUpPanel{margin-top:18px;border:1px solid #dfe4ec;border-radius:14px;background:#fff;overflow:hidden}.nextUpPanel .queueHead{padding:13px 15px;background:#f7f8fb;border-bottom:1px solid #e7eaf0}.nextUpGrid{display:grid;gap:0}.nextCard{display:grid;grid-template-columns:42px minmax(0,1fr) auto;gap:12px;align-items:center;padding:13px 15px;border-top:1px solid #edf0f4}.nextCard:first-child{border-top:0}.nextCard.priorityRow{background:#fffaf0}.nextNumber{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;background:#f2f4f7;color:#344054;font-weight:900}.nextDetails{display:grid;gap:2px;min-width:0}.nextDetails strong{font-size:14px}.nextDetails span{font-weight:700;color:#344054;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.nextDetails small{color:#667085}.nextAssign{white-space:nowrap}.nextWaiting{font-size:12px;color:#b54708;font-weight:700}.nextEmpty{padding:17px 15px;color:#667085}.controlCard{min-height:170px}.controlCard.isPlaying{box-shadow:0 0 0 2px #d7c8f4 inset}.controlScore{display:inline-block;margin-top:10px}
+@media(max-width:800px){.nextCard{grid-template-columns:34px minmax(0,1fr)}.nextAssign,.nextWaiting{grid-column:2;justify-self:start}.nextAssign{width:100%}}
+
 `;
