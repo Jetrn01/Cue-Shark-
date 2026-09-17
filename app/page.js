@@ -426,6 +426,20 @@ export default function Home() {
     if(r.error)setMsg(r.error.message);else load(selected)
   }
 
+  async function approveMatchResult(m){
+    if(!m)return;
+    const name=`${playerName(m.player1_id)} ${m.score1??0}–${m.score2??0} ${playerName(m.player2_id)}`;
+    if(!window.confirm(`Approve this result as official?\n\n${name}`))return;
+    const {error}=await supabase.rpc('organiser_approve_match_result',{p_match_id:m.id});
+    if(error)setMsg(`Could not approve result: ${error.message}`);else{await load(selected);setMsg(`Result for Match ${m.match_number} is now official.`);}
+  }
+  async function reopenMatchResult(m){
+    if(!m)return;
+    if(!window.confirm(`Reopen Match ${m.match_number} for score correction? The current result will remain visible but the match can be edited again.`))return;
+    const {error}=await supabase.rpc('organiser_reopen_match_result',{p_match_id:m.id});
+    if(error)setMsg(`Could not reopen result: ${error.message}`);else{await load(selected);setMsg(`Match ${m.match_number} has been reopened for correction.`);}
+  }
+
   async function quickAssign(m,t){
     if(!m || !t || t.status==='unavailable' || m.status!=='scheduled') return;
     const needsAccessible=[m.player1_id,m.player2_id].some(pid=>players.find(x=>x.player_id===pid)?.players?.requires_accessible_table);
@@ -718,6 +732,8 @@ export default function Home() {
 
   function matchStatusLabel(m){
     if(m.status==='completed') return 'Completed';
+    if(m.status==='pending_confirmation') return 'Awaiting player confirmation';
+    if(m.status==='disputed') return 'Result disputed';
     if(m.status==='scheduled') return 'Ready to play';
     if(m.status==='in_progress' || m.status==='active') return 'Playing';
     if(m.status==='bye') return 'Bye — advances automatically';
@@ -764,6 +780,8 @@ export default function Home() {
     const ready=matches.filter(m=>m.status==='scheduled' && !m.table_id);
     const waiting=matches.filter(m=>m.status==='waiting');
     const completed=matches.filter(m=>m.status==='completed').sort((a,b)=>(b.match_number||0)-(a.match_number||0));
+    const confirmationPending=matches.filter(m=>m.status==='pending_confirmation');
+    const disputed=matches.filter(m=>m.status==='disputed');
     const available=tables.filter(t=>t.status==='available');
     const inaccessible=tables.filter(t=>t.status==='unavailable');
     const needsAccessible=(m)=>[m.player1_id,m.player2_id].some(pid=>players.find(x=>x.player_id===pid)?.players?.requires_accessible_table);
@@ -793,6 +811,7 @@ export default function Home() {
         <div><strong>{waiting.length}</strong><span>Waiting</span></div>
         <div><strong>{available.length}</strong><span>Tables free</span></div>
         <div><strong>{completed.length}</strong><span>Completed</span></div>
+        <div><strong>{confirmationPending.length+disputed.length}</strong><span>Needs result review</span></div>
         <button onClick={()=>load(selected)}>↻ Refresh now</button>
         <button className="primary" onClick={assignNextReady} disabled={!ready.length || !available.length}>⚡ Assign next ready</button>
       </div>
@@ -805,9 +824,11 @@ export default function Home() {
         <div className="progressTrack"><div className="progressFill" style={{width:`${matches.length ? Math.round((completed.length/matches.length)*100) : 0}%`}} /></div>
       </div>
 
-      {(accessibleReady.length>0 || (ready.length>0 && available.length===0) || inaccessible.length>0) &&
+      {(confirmationPending.length>0 || disputed.length>0 || accessibleReady.length>0 || (ready.length>0 && available.length===0) || inaccessible.length>0) &&
         <div className="attentionPanel">
           <div className="attentionTitle">⚠️ Needs attention</div>
+          {confirmationPending.map(m=><div className="attentionItem resultReviewItem" key={`confirm-${m.id}`}><div><strong>🔐 Match {m.match_number} awaiting confirmation</strong><span>{playerName(m.player1_id)} {m.score1??0}–{m.score2??0} {playerName(m.player2_id)} · {m.p1_confirmed?'✓ P1 confirmed':'P1 waiting'} · {m.p2_confirmed?'✓ P2 confirmed':'P2 waiting'}</span></div><div className="reviewActions"><button className="primary" onClick={()=>approveMatchResult(m)}>Approve</button><button onClick={()=>reopenMatchResult(m)}>Reopen</button></div></div>)}
+          {disputed.map(m=><div className="attentionItem resultReviewItem" key={`dispute-${m.id}`}><div><strong>⚠️ Match {m.match_number} disputed</strong><span>{playerName(m.player1_id)} {m.score1??0}–{m.score2??0} {playerName(m.player2_id)}{m.dispute_reason?` · ${m.dispute_reason}`:''}</span></div><div className="reviewActions"><button className="primary" onClick={()=>approveMatchResult(m)}>Approve stored result</button><button onClick={()=>reopenMatchResult(m)}>Reopen</button></div></div>)}
           {accessibleReady.length>0 && eligibleAvailable(accessibleReady[0]).length===0 &&
             <div className="attentionItem"><strong>♿ {accessibleReady.length} accessibility-priority match{accessibleReady.length===1?'':'es'}</strong><span>No suitable accessible table is currently available.</span></div>}
           {ready.length>0 && available.length===0 &&
@@ -840,7 +861,9 @@ export default function Home() {
                 <div className="controlPlayers">{playerName(active.player1_id)} <b>vs</b> {playerName(active.player2_id)}</div>
                 <div className="scoreLine">Race to {active.race_to} · <strong>{active.score1??0} – {active.score2??0}</strong></div>
                 {needsAccessible(active)&&<div className="accessNote">♿ Accessible table required</div>}
-                <a className="scoreLink controlScore" href={`/score/${t.table_token||t.id}`} target="_blank" rel="noreferrer">📱 Open scoring</a>
+                {active.status==='pending_confirmation'&&<div className="accessNote resultPendingNote">🔐 Waiting for both players to confirm</div>}
+                {active.status==='disputed'&&<div className="accessNote resultDisputedNote">⚠️ Result disputed — organiser review required</div>}
+                {active.status!=='pending_confirmation'&&active.status!=='disputed'&&<a className="scoreLink controlScore" href={`/score/${t.table_token||t.id}`} target="_blank" rel="noreferrer">📱 Open scoring</a>}
               </div> :
               <div className="controlEmpty">
                 {t.status==='unavailable'
@@ -1334,7 +1357,7 @@ const css=`*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;ba
 .nextUpPanel{margin-top:18px;border:1px solid #dfe4ec;border-radius:14px;background:#fff;overflow:hidden}.nextUpPanel .queueHead{padding:13px 15px;background:#f7f8fb;border-bottom:1px solid #e7eaf0}.nextUpGrid{display:grid;gap:0}.nextCard{display:grid;grid-template-columns:42px minmax(0,1fr) auto;gap:12px;align-items:center;padding:13px 15px;border-top:1px solid #edf0f4}.nextCard:first-child{border-top:0}.nextCard.priorityRow{background:#fffaf0}.nextNumber{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;background:#f2f4f7;color:#344054;font-weight:900}.nextDetails{display:grid;gap:2px;min-width:0}.nextDetails strong{font-size:14px}.nextDetails span{font-weight:700;color:#344054;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.nextDetails small{color:#667085}.nextAssign{white-space:nowrap}.nextWaiting{font-size:12px;color:#b54708;font-weight:700}.nextEmpty{padding:17px 15px;color:#667085}.controlCard{min-height:170px}.controlCard.isPlaying{box-shadow:0 0 0 2px #d7c8f4 inset}.controlScore{display:inline-block;margin-top:10px}
 @media(max-width:800px){.nextCard{grid-template-columns:34px minmax(0,1fr)}.nextAssign,.nextWaiting{grid-column:2;justify-self:start}.nextAssign{width:100%}}
 
-.commandProgress{margin-top:12px;padding:13px 15px;border:1px solid #e1e6ee;border-radius:12px;background:#fff}.commandProgressTop{display:flex;justify-content:space-between;align-items:end;gap:12px}.commandProgressTop div{display:grid;gap:2px}.commandProgressTop span{font-size:12px;color:#667085}.progressTrack{height:7px;border-radius:99px;background:#edf0f4;overflow:hidden;margin-top:9px}.progressFill{height:100%;border-radius:99px;background:var(--pm-purple);transition:width .3s ease}.attentionPanel{margin-top:12px;border:1px solid #f2d29a;border-radius:12px;background:#fffaf0;overflow:hidden}.attentionTitle{font-weight:900;padding:11px 14px;border-bottom:1px solid #f2d29a}.attentionItem{display:flex;justify-content:space-between;gap:15px;padding:9px 14px;border-top:1px solid #f7e3be;font-size:12px}.attentionItem:first-of-type{border-top:0}.attentionItem strong{color:#7a4b00}.attentionItem span{color:#8a5a10;text-align:right}.controlTablesSubhead{margin-top:13px}.controlTablesSubhead h4{margin-bottom:0}
+.commandProgress{margin-top:12px;padding:13px 15px;border:1px solid #e1e6ee;border-radius:12px;background:#fff}.commandProgressTop{display:flex;justify-content:space-between;align-items:end;gap:12px}.commandProgressTop div{display:grid;gap:2px}.commandProgressTop span{font-size:12px;color:#667085}.progressTrack{height:7px;border-radius:99px;background:#edf0f4;overflow:hidden;margin-top:9px}.progressFill{height:100%;border-radius:99px;background:var(--pm-purple);transition:width .3s ease}.attentionPanel{margin-top:12px;border:1px solid #f2d29a;border-radius:12px;background:#fffaf0;overflow:hidden}.attentionTitle{font-weight:900;padding:11px 14px;border-bottom:1px solid #f2d29a}.attentionItem{display:flex;justify-content:space-between;gap:15px;padding:9px 14px;border-top:1px solid #f7e3be;font-size:12px}.attentionItem:first-of-type{border-top:0}.attentionItem strong{color:#7a4b00}.attentionItem span{color:#8a5a10;text-align:right}.resultReviewItem{align-items:center}.resultReviewItem>div:first-child{display:grid;gap:3px;min-width:0}.reviewActions{display:flex;gap:6px;flex-wrap:wrap}.resultPendingNote{color:#7a4b00}.resultDisputedNote{color:#b42318}@media(max-width:800px){.resultReviewItem{display:grid}.reviewActions{justify-content:flex-start}}.controlTablesSubhead{margin-top:13px}.controlTablesSubhead h4{margin-bottom:0}
 @media(max-width:800px){.attentionItem{display:grid;gap:3px}.attentionItem span{text-align:left}.commandProgressTop{align-items:center}}
 .playerEntry{margin-top:16px;padding-top:14px;border-top:1px solid #edf0f4;display:grid;gap:4px;text-align:center;font-size:12px;color:#667085}.playerEntry a{color:#6f2dbd;font-weight:800;text-decoration:none}
 `;

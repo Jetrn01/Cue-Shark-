@@ -22,6 +22,8 @@ export default function ScorePage() {
 
   useEffect(() => {
     if (token) load(token);
+    const timer = token ? setInterval(() => load(token), 5000) : null;
+    return () => { if (timer) clearInterval(timer); };
   }, [token]);
 
   async function load(tableToken) {
@@ -57,7 +59,7 @@ export default function ScorePage() {
   }
 
   async function submitScore(player, winnerBalls = null) {
-    if (!data?.match_id || data.status === 'completed' || busy) return;
+    if (!data?.match_id || ['completed','pending_confirmation','disputed'].includes(data.status) || busy) return;
 
     setBusy(true);
     setError('');
@@ -96,7 +98,7 @@ export default function ScorePage() {
   }
 
   async function awardFrame(player) {
-    if (!data?.match_id || data.status === 'completed' || busy) return;
+    if (!data?.match_id || ['completed','pending_confirmation','disputed'].includes(data.status) || busy) return;
 
     if (raceTo === 1) {
       setError('');
@@ -211,6 +213,24 @@ export default function ScorePage() {
               <div className="trophy">🏆</div>
               <div>MATCH COMPLETE</div>
               <strong>{winner} wins {score1}–{score2}{raceTo === 1 && data?.winner_balls !== null && data?.winner_balls !== undefined ? ` · ${data.winner_balls} balls remaining` : ""}</strong>
+              <small>Both players have confirmed this result.</small>
+            </div>
+          ) : data.status === 'pending_confirmation' ? (
+            <div className="confirmationPanel">
+              <div className="trophy">🔐</div>
+              <div><strong>RESULT AWAITING CONFIRMATION</strong></div>
+              <p>{winner} wins {score1}–{score2}. Both players must confirm this result before it becomes official.</p>
+              <div className="confirmStates">
+                <span className={data.p1_confirmed ? 'confirmed' : ''}>{data.player1_name}: {data.p1_confirmed ? '✓ Confirmed' : 'Waiting'}</span>
+                <span className={data.p2_confirmed ? 'confirmed' : ''}>{data.player2_name}: {data.p2_confirmed ? '✓ Confirmed' : 'Waiting'}</span>
+              </div>
+              <a className="loginConfirm" href="/player/login">Player login → Confirm result</a>
+            </div>
+          ) : data.status === 'disputed' ? (
+            <div className="confirmationPanel disputed">
+              <div className="trophy">⚠️</div>
+              <div><strong>RESULT DISPUTED</strong></div>
+              <p>The players did not agree on this result. An organiser needs to review it.</p>
             </div>
           ) : (
             <p className="hint">After each frame, tap the button for the player who won it.</p>
@@ -250,7 +270,7 @@ body{margin:0;font-family:Arial,Helvetica,sans-serif;background:#f5f7fa;color:#1
 .winner{text-align:center;border-radius:14px;padding:18px;margin-top:12px;background:#eef7ee;font-size:20px}
 .winner strong{display:block;margin-top:8px;font-size:22px}
 .trophy{font-size:32px;margin-bottom:4px}
-.hint{text-align:center;color:#667085;font-size:16px}
+.hint{text-align:center;color:#667085;font-size:16px}.confirmationPanel{margin-top:12px;border:1px solid #d7c8f4;border-radius:14px;padding:18px;text-align:center;background:#faf7ff}.confirmationPanel p{color:#667085;line-height:1.45}.confirmationPanel small{display:block;color:#667085;margin-top:8px}.confirmationPanel.disputed{border-color:#f2d29a;background:#fffaf0}.confirmStates{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 0}.confirmStates span{padding:9px;border:1px solid #dfe4ec;border-radius:9px;background:#fff;color:#667085;font-size:13px}.confirmStates .confirmed{border-color:#abefc6;background:#ecfdf3;color:#067647;font-weight:800}.loginConfirm{display:inline-block;padding:10px 14px;border-radius:9px;background:#10182a;color:#fff;text-decoration:none;font-weight:800;font-size:14px}
 .error{color:#b42318;background:#fff1f0;border:1px solid #f1b7b2;border-radius:10px;padding:12px;margin-top:16px;text-align:center}
 .secondary{border:1px solid #aab3c2;background:#fff;border-radius:10px;padding:12px 18px;font-size:16px;cursor:pointer}
 .refresh{display:block;margin:18px auto 0}
