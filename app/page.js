@@ -572,6 +572,13 @@ export default function Home() {
 
   async function generateReverseCrossover(){
     if(!selected)return;
+    // A reverse crossover is a one-time transition from the completed
+    // group stage into the fixed knockout bracket.
+    const existingCrossover=matches.some(m=>Number(m.round_number)>1 && !m.group_name);
+    if(existingCrossover){
+      setMsg('The Reverse Crossover has already been generated for this competition.');
+      return;
+    }
     const groupMatches=matches.filter(m=>m.round_number===1 && m.group_name);
     if(!groupMatches.length || groupMatches.some(m=>m.status!=='completed')){setMsg('Complete all group-stage matches before generating the reverse crossover.');return;}
     const groupNames=[...new Set(groupMatches.map(m=>m.group_name))].sort();
@@ -898,7 +905,7 @@ export default function Home() {
   <Panel title="Matches & Table Assignment">
     <div className="drawTools">
       <button className="primary" onClick={()=>setModal({type:'draw'})}>🎱 {matches.length?'Edit / Regenerate Draw':'Create Draw'}</button>
-      {matches.some(m=>m.group_name)&&matches.filter(m=>m.group_name).every(m=>m.status==='completed')&&<button onClick={generateReverseCrossover}>🏆 Generate Reverse Crossover</button>}
+      {matches.some(m=>m.group_name)&&matches.filter(m=>m.group_name).every(m=>m.status==='completed')&&<button onClick={generateReverseCrossover} disabled={matches.some(m=>Number(m.round_number)>1 && !m.group_name)}>🏆 Generate Reverse Crossover</button>}
       {matches.length===0&&<p className="muted">No matches created yet.</p>}
     </div>
     {matches.filter(m=>!(m.status==='waiting' && !m.player1_id && !m.player2_id)).map(m=><div className={`row ${m.status==='bye'?'byeRow':''}`} key={m.id}>
