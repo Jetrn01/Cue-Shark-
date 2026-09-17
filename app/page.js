@@ -113,7 +113,7 @@ export default function Home() {
   const [templateTables,setTemplateTables]=useState([]);
   const [players,setPlayers]=useState([]),[tables,setTables]=useState([]),[matches,setMatches]=useState([]);
   const [modal,setModal]=useState(null),[msg,setMsg]=useState('');
-  const [drawSettings,setDrawSettings]=useState({type:'Knockout',race_to:3,group_count:4,knockout_seeding:'seeded'});
+  const [drawSettings,setDrawSettings]=useState({type:'Knockout',race_to:3,group_count:4});
   const [qrData,setQrData]=useState(null);
   const [playerDB,setPlayerDB]=useState([]);
   const [profileData,setProfileData]=useState({player:null,matches:[],competitions:[],templates:[],loading:false});
@@ -476,18 +476,7 @@ export default function Home() {
 
     const race=Number(settings.race_to||selected.default_race_to||3);
     let ordered=[...checkedPlayers];
-    const knockoutMode = settings.type==='Random Draw' ? 'random' : settings.type==='Seeded Draw' ? 'seeded' : (settings.knockout_seeding||'seeded');
-    if(settings.type==='Random Draw' || (settings.type==='Knockout' && knockoutMode==='random')) ordered.sort(()=>Math.random()-0.5);
-    if((settings.type==='Knockout' || settings.type==='Seeded Draw') && knockoutMode==='seeded'){
-      const bracketSize=2**Math.ceil(Math.log2(ordered.length));
-      let seedOrder=[1,2];
-      for(let n=2;n<bracketSize;n*=2){
-        const next=[];
-        for(const seed of seedOrder) next.push(seed, n*2+1-seed);
-        seedOrder=next;
-      }
-      ordered=seedOrder.map(seed=>checkedPlayers[seed-1]||null);
-    }
+    if(settings.type==='Random Draw') ordered.sort(()=>Math.random()-0.5);
 
     if(settings.type==='Round Robin'){
       const rows=[]; let n=1;
@@ -627,7 +616,13 @@ export default function Home() {
     await load(selected);setMsg(`Reverse crossover created for ${groupNames.length} groups. Groups are paired A vs B, C vs D, etc., with highest finishes playing lowest finishes in the opposing group.`);
   }
 
-  async function generateKnockout(){
+  function traditionalSeedOrder(size){
+    let order=[1,2];
+    for(let n=2;n<size;n*=2) order=order.flatMap(seed=>[seed,2*n+1-seed]);
+    return order;
+  }
+
+  async function generateKnockout(settings=drawSettings){
     if(!selected)return;
     if((selected.format||'').toLowerCase()!=='knockout'){
       setMsg('Set the competition format to Knockout before generating a knockout draw.');
@@ -647,10 +642,23 @@ export default function Home() {
     const size=2**Math.ceil(Math.log2(checkedPlayers.length));
     const rounds=Math.log2(size);
     const all=[]; const roundLists=[]; let matchNumber=1;
+    let slotPlayers;
+    if(settings.knockout_seeding==='random'){
+      slotPlayers=[...checkedPlayers].sort(()=>Math.random()-0.5);
+      slotPlayers=slotPlayers.concat(Array(size-slotPlayers.length).fill(null));
+    }else if(settings.knockout_seeding==='seeded'){
+      const seedPositions=traditionalSeedOrder(size);
+      const seeded=Array(size).fill(null);
+      seedPositions.forEach((seed,idx)=>{seeded[idx]=checkedPlayers[seed-1]||null;});
+      slotPlayers=seeded;
+    }else{
+      slotPlayers=[...checkedPlayers, ...Array(size-checkedPlayers.length).fill(null)];
+    }
+
     let first=[];
     for(let i=0;i<size/2;i++){
-      const p1=checkedPlayers[i*2]||null;
-      const p2=checkedPlayers[i*2+1]||null;
+      const p1=slotPlayers[i*2]||null;
+      const p2=slotPlayers[i*2+1]||null;
       const bye=!!p1!==!!p2;
       const row={id:crypto.randomUUID(),competition_id:selected.id,match_number:matchNumber++,round_number:1,player1_id:p1,player2_id:p2,race_to:Number(selected.default_race_to||3),status:bye?'bye':'scheduled',score1:0,score2:0,next_match_id:null,next_slot:null,winner_id:bye?(p1||p2):null,loser_id:null,table_id:null};
       first.push(row);all.push(row);
@@ -666,39 +674,34 @@ export default function Home() {
       }
       roundLists.push(current);
     }
-    // Propagate byes only through branches that are genuinely empty.
-    const potentialKO = new Map();
-    for(const m of roundLists[0]) potentialKO.set(m.id, !!(m.player1_id || m.player2_id));
+    const potentialKO=new Map();
+    for(const m of roundLists[0]) potentialKO.set(m.id,!!(m.player1_id||m.player2_id));
     for(let r=0;r<roundLists.length-1;r++){
       for(const feeder of roundLists[r]){
         const target=all.find(x=>x.id===feeder.next_match_id);
-        if(!target) continue;
-        if(feeder.status==='bye' && feeder.winner_id){
-          if(feeder.next_slot===1)target.player1_id=feeder.winner_id;
-          else target.player2_id=feeder.winner_id;
+        if(!target)continue;
+        if(feeder.status==='bye'&&feeder.winner_id){
+          if(feeder.next_slot===1)target.player1_id=feeder.winner_id;else target.player2_id=feeder.winner_id;
         }
       }
       for(const m of roundLists[r+1]){
         const feeders=roundLists[r].filter(f=>f.next_match_id===m.id).sort((a,b)=>a.next_slot-b.next_slot);
-        potentialKO.set(m.id, feeders.some(f=>potentialKO.get(f.id)));
-        if(m.player1_id && m.player2_id){m.status='scheduled';continue;}
+        potentialKO.set(m.id,feeders.some(f=>potentialKO.get(f.id)));
+        if(m.player1_id&&m.player2_id){m.status='scheduled';continue;}
         const sole=m.player1_id||m.player2_id;
-        if(!sole) continue;
+        if(!sole)continue;
         const missingSlot=m.player1_id?2:1;
         const missing=feeders.find(f=>f.next_slot===missingSlot);
-        if(missing && !potentialKO.get(missing.id)){
-          m.status='bye';
-          m.winner_id=sole;
-        }
+        if(missing&&!potentialKO.get(missing.id)){m.status='bye';m.winner_id=sole;}
       }
     }
-    const finalMatch=roundLists[roundLists.length-1][0];
-    finalMatch.status=finalMatch.player1_id&&finalMatch.player2_id?'scheduled':'waiting';
-
+    const final=roundLists.at(-1)[0];
+    if(final.player1_id&&final.player2_id)final.status='scheduled';
     const {error}=await supabase.from('competition_matches').insert(all);
-    if(error){setMsg(error.message);return;}
-    await load(selected);
-    setMsg(`Knockout draw created for ${checkedPlayers.length} players.`);
+    if(error){setMsg(`Could not create draw: ${error.message}`);return;}
+    await load(selected);setModal(null);
+    const modeLabel=settings.knockout_seeding==='seeded'?'Seeded':settings.knockout_seeding==='random'?'Random':'Current player order';
+    setMsg(`Knockout draw created for ${checkedPlayers.length} players — ${modeLabel}.`);
   }
 
   function matchStatusLabel(m){
@@ -947,10 +950,8 @@ function DrawModal({selected,players,settings,setSettings,close,generate,generat
     <label>Draw type<select value={isReverse?'Groups → Reverse Crossover':settings.type} onChange={e=>setSettings({...settings,type:e.target.value})}>
       <option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Seeded Draw</option><option>Groups → Reverse Crossover</option>
     </select></label>
-    {(settings.type==='Knockout'||settings.type==='Seeded Draw'||settings.type==='Random Draw') && <label>Knockout seeding<select value={settings.type==='Random Draw'?'random':settings.type==='Seeded Draw'?'seeded':(settings.knockout_seeding||'seeded')} onChange={e=>setSettings({...settings,knockout_seeding:e.target.value,type:'Knockout'})}>
-      <option value="seeded">Seeded — 1 vs 16, 8 vs 9…</option>
-      <option value="random">Random</option>
-      <option value="current">Current player order</option>
+    {settings.type==='Knockout'&&<label>Knockout seeding<select value={settings.knockout_seeding||'current'} onChange={e=>setSettings({...settings,knockout_seeding:e.target.value})}>
+      <option value="seeded">Seeded — traditional bracket</option><option value="random">Random</option><option value="current">Current player order</option>
     </select></label>}
     {isReverse && <label>Number of groups<select value={groupCount} onChange={e=>setSettings({...settings,group_count:Number(e.target.value),type:'Groups → Reverse Crossover'})}>
       {groupOptions.length?groupOptions.map(n=><option key={n} value={n}>{n} groups</option>):<option value="2">2 groups</option>}
@@ -959,10 +960,10 @@ function DrawModal({selected,players,settings,setSettings,close,generate,generat
       {[1,2,3,5,7,9].map(n=><option key={n} value={n}>Race to {n}</option>)}
     </select></label>
     <div className="settingNote">
-      {settings.type==='Knockout'&&`Winners automatically progress through later rounds. ${settings.knockout_seeding==='current'?'Players are paired in current checked-in order.':settings.knockout_seeding==='random'?'Players are shuffled randomly.':'Traditional seeded bracket: 1 vs 16, 8 vs 9, 4 vs 13, 5 vs 12, 2 vs 15, 7 vs 10, 3 vs 14, 6 vs 11 (for 16 players).'}`}
+      {settings.type==='Knockout'&&(settings.knockout_seeding==='seeded'?'Traditional seeded bracket: 1 vs last seed, 8 vs 9, 4 vs 13, 5 vs 12, etc. Winners keep their bracket positions.':settings.knockout_seeding==='random'?'Players are shuffled randomly before the knockout bracket is created.':'Players are paired in their current checked-in order. Winners keep their bracket positions.')}
       {settings.type==='Round Robin'&&'Every checked-in player plays every other player once.'}
       {settings.type==='Random Draw'&&'Players are shuffled before the knockout draw.'}
-      {settings.type==='Seeded Draw'&&'Traditional seeded knockout bracket. Seed 1 plays the lowest seed, with standard bracket positions.'}
+      {settings.type==='Seeded Draw'&&'Players stay in their current checked-in order as the seed order.'}
       {isReverse&&`Players are split as evenly as possible into ${groupCount} groups. After the group stage, groups are paired A vs B, C vs D, etc. Within each pair, 1st plays last, 2nd plays second-last, and so on. Odd or uneven crossover slots receive byes.`}
     </div>
     {isReverse && checked>=2 && <div className="drawPreviewNote"><strong>{checked} players:</strong> {groupCount} groups of about {Math.floor(checked/groupCount)}–{Math.ceil(checked/groupCount)} players. Any crossover byes will be shown in the generated draw.</div>}
@@ -1161,12 +1162,6 @@ function TemplateModal({t,close,save}){
 function TableModal({t,close,save}){const[f,setF]=useState({table_number:t?.table_number||'',table_type:t?.table_type||'Standard',notes:t?.notes||'',is_accessible:!!t?.is_accessible,status:t?.status||'available'});return <Modal title={t?'Edit table':'Add table'} close={close}><form onSubmit={e=>{e.preventDefault();save(f,t)}}><label>Table number<input required type="number" min="1" value={f.table_number} onChange={e=>setF({...f,table_number:e.target.value})}/></label><label>Table type<select value={f.table_type} onChange={e=>setF({...f,table_type:e.target.value})}><option>Standard</option><option>Accessible</option><option>Reserved / Unavailable</option></select></label><label className="check"><input type="checkbox" checked={f.is_accessible} onChange={e=>setF({...f,is_accessible:e.target.checked})}/> Accessible table ♿</label><label>Table notes<textarea value={f.notes} onChange={e=>setF({...f,notes:e.target.value})}/></label><div className="ma"><button type="button" onClick={close}>Cancel</button><button className="primary">Save</button></div></form></Modal>}
 
 
-.playerNameButton{border:0;background:transparent;padding:0;text-align:left;color:#172033}.playerNameButton:hover{text-decoration:underline}
-.profileHero{background:#f7f8fb;border:1px solid #e3e7ee;border-radius:14px;padding:16px;margin-bottom:18px}.profileHero h2{margin:0 0 5px}.profileHero p{margin:0;color:#667085}
-.profileStats{display:grid;grid-template-columns:repeat(6,minmax(80px,1fr));gap:8px;margin-top:16px}.profileStats>div{background:#fff;border:1px solid #e3e7ee;border-radius:10px;padding:10px;text-align:center}.profileStats b{display:block;font-size:21px}.profileStats span{display:block;color:#667085;font-size:11px;margin-top:3px}
-.profileSection{border-top:1px solid #edf0f4;padding-top:15px;margin-top:15px}.profileSection h4{margin:0 0 10px}.profileTable{border:1px solid #e3e7ee;border-radius:10px;overflow:hidden}.profileTableHead,.profileTableRow{display:grid;grid-template-columns:2fr .7fr .7fr .7fr .7fr;gap:8px;padding:10px 12px;align-items:center}.profileTableHead{background:#f7f8fb;font-size:12px;font-weight:800;color:#667085}.profileTableRow{border-top:1px solid #edf0f4}.profileTableRow small{display:block;color:#667085;font-size:11px;margin-top:3px}
-.profileMatches{display:grid;gap:7px}.profileMatch{display:flex;justify-content:space-between;gap:15px;align-items:center;border:1px solid #e3e7ee;border-radius:10px;padding:11px 12px}.profileMatch small{display:block;color:#667085;margin-top:3px}.profileMatch strong{font-size:18px;white-space:nowrap}
-@media(max-width:700px){.profileStats{grid-template-columns:repeat(3,1fr)}.profileTableHead,.profileTableRow{grid-template-columns:1.7fr .6fr .7fr .7fr .7fr}.profileMatch{align-items:flex-start}}
 const css=`*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:#f5f7fa;color:#172033}button,input,select,textarea{font:inherit}button{cursor:pointer;border:1px solid #d8dee8;background:#fff;border-radius:8px;padding:9px 12px}.primary{background:#172033;color:#fff;border-color:#172033}.danger{color:#b42318}.link{border:0;background:none;color:#315fdb}.auth{min-height:100vh;display:grid;place-items:center}.card{background:#fff;padding:36px;border-radius:18px;box-shadow:0 12px 40px #0001;width:min(430px,92vw)}.card form{display:grid;gap:12px}.card input{padding:12px;border:1px solid #ccd3df;border-radius:8px}.error{color:#b42318}header{background:#fff;border-bottom:1px solid #e4e8ef;padding:15px 24px;display:flex;justify-content:space-between;align-items:center}header h1{margin:0;font-size:25px}.layout{display:grid;grid-template-columns:260px 1fr;max-width:1400px;margin:auto;min-height:calc(100vh - 72px)}aside{background:#fff;border-right:1px solid #e4e8ef;padding:15px}.asideTitle{display:flex;flex-direction:column;gap:10px;margin-bottom:10px}.createBtn{width:100%;font-weight:700}aside button{display:block;width:100%;text-align:left;border:0;margin-top:6px}aside small{display:block;color:#758096;margin-top:4px}.sel{background:#eef2ff}.content{padding:22px;max-width:1100px}.hero{background:#fff;border:1px solid #e3e7ee;border-radius:14px;padding:20px;display:flex;justify-content:space-between;margin-bottom:18px}.hero h2{margin:0 0 6px}.hero p{margin:0;color:#6a7587}.heroRight{display:flex;flex-direction:column;align-items:flex-end;gap:12px}.settingsSummary{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px;color:#667085;font-size:13px}.settingsSummary span{background:#f5f7fa;padding:7px 9px;border-radius:7px}.dbTop{display:flex;gap:8px;margin-bottom:10px}.dbTop input{flex:1}.dbList{max-height:55vh;overflow:auto}.settingNote{background:#f5f7fa;border:1px solid #e3e7ee;border-radius:8px;padding:10px;color:#667085;font-size:13px;line-height:1.4}.stats{display:flex;gap:15px;align-items:center;flex-wrap:wrap}.stats b{background:#f5f7fa;padding:10px 12px;border-radius:8px}.panel{background:#fff;border:1px solid #e3e7ee;border-radius:14px;margin-bottom:18px;padding:16px}.ph{display:flex;justify-content:space-between;align-items:center}.ph h3{margin:0}.row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid #edf0f4}.row small{display:block;color:#707b8d;margin-top:4px}.actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap}.qr{border:1px dashed #aab3c2;border-radius:6px;padding:8px;text-align:center;font-size:11px}.qrLarge{display:flex;justify-content:center;align-items:center;padding:8px}.qrLarge img{width:320px;height:320px;max-width:100%;image-rendering:auto}.scoreLink{padding:9px 12px;border:1px solid #d8dee8;border-radius:8px;text-decoration:none;color:#172033;background:#fff}.muted{color:#778194}.drawTools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}.empty{padding:70px 30px}.notice{margin:14px auto;padding:10px 14px;background:#fff4e5;border:1px solid #ffd7a3;width:94%;border-radius:8px}.notice button{float:right;padding:2px 7px}.backdrop{position:fixed;inset:0;background:#0006;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:18px}.modal{background:#fff;width:min(520px,95vw);max-height:calc(100vh - 36px);overflow-y:auto;border-radius:14px;padding:18px;margin:auto 0}.mh{display:flex;justify-content:space-between;align-items:center}.modal form{display:grid;gap:12px}.modal label{display:grid;gap:5px;font-weight:600}.modal input,.modal select,.modal textarea{padding:10px;border:1px solid #ccd3df;border-radius:8px}.modal textarea{min-height:80px}.check{display:flex!important;align-items:center;gap:8px}.ma{display:flex;justify-content:flex-end;gap:8px}@media(max-width:850px){.heroRight{align-items:flex-start;margin-top:15px}.layout{grid-template-columns:1fr}aside{border-right:0;border-bottom:1px solid #e4e8ef}.hero{display:block}.row{flex-direction:column;align-items:flex-start}.actions{width:100%}}
 .controlIntro{display:flex;justify-content:space-between;gap:14px;align-items:center;background:#f7f8fb;border:1px solid #e3e7ee;border-radius:12px;padding:13px 15px;margin:10px 0 14px}
 .controlIntro strong{display:block}.controlIntro span{display:block;color:#667085;font-size:13px;margin-top:3px}.liveBadge{font-size:11px!important;font-weight:800;color:#087443!important;background:#ecfdf3;border:1px solid #abefc6;border-radius:999px;padding:6px 9px;white-space:nowrap}
@@ -1241,4 +1236,11 @@ const css=`*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;ba
 .bracketMatch>div:not(.bracketMatchNo){display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-bottom:1px solid #eef0f3}
 .bracketMatch>div:last-of-type{border-bottom:0}.winnerLine{font-weight:800}.bracketMatch small{display:block;color:#667085;margin-top:7px}
 @media(max-width:700px){.bracket{gap:12px}.bracketRound{min-width:200px}}
+
+.playerNameButton{border:0;background:transparent;padding:0;text-align:left;color:#172033}.playerNameButton:hover{text-decoration:underline}
+.profileHero{background:#f7f8fb;border:1px solid #e3e7ee;border-radius:14px;padding:16px;margin-bottom:18px}.profileHero h2{margin:0 0 5px}.profileHero p{margin:0;color:#667085}
+.profileStats{display:grid;grid-template-columns:repeat(6,minmax(80px,1fr));gap:8px;margin-top:16px}.profileStats>div{background:#fff;border:1px solid #e3e7ee;border-radius:10px;padding:10px;text-align:center}.profileStats b{display:block;font-size:21px}.profileStats span{display:block;color:#667085;font-size:11px;margin-top:3px}
+.profileSection{border-top:1px solid #edf0f4;padding-top:15px;margin-top:15px}.profileSection h4{margin:0 0 10px}.profileTable{border:1px solid #e3e7ee;border-radius:10px;overflow:hidden}.profileTableHead,.profileTableRow{display:grid;grid-template-columns:2fr .7fr .7fr .7fr .7fr;gap:8px;padding:10px 12px;align-items:center}.profileTableHead{background:#f7f8fb;font-size:12px;font-weight:800;color:#667085}.profileTableRow{border-top:1px solid #edf0f4}.profileTableRow small{display:block;color:#667085;font-size:11px;margin-top:3px}
+.profileMatches{display:grid;gap:7px}.profileMatch{display:flex;justify-content:space-between;gap:15px;align-items:center;border:1px solid #e3e7ee;border-radius:10px;padding:11px 12px}.profileMatch small{display:block;color:#667085;margin-top:3px}.profileMatch strong{font-size:18px;white-space:nowrap}
+@media(max-width:700px){.profileStats{grid-template-columns:repeat(3,1fr)}.profileTableHead,.profileTableRow{grid-template-columns:1.7fr .6fr .7fr .7fr .7fr}.profileMatch{align-items:flex-start}}
 `;

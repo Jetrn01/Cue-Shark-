@@ -1,12 +1,19 @@
 # PottersMate V12.1 — Knockout Seeding
 
-Updated the Knockout draw builder with explicit seeding choices:
+This release adds explicit seeding choices to the Knockout draw builder:
 
-1. Seeded — traditional bracket positions.
-   For 16 players: 1v16, 8v9, 4v13, 5v12, 2v15, 7v10, 3v14, 6v11.
-2. Random — shuffled players.
-3. Current player order — pairs players in checked-in order.
+- **Seeded — traditional bracket**
+  - 16 players: 1v16, 8v9, 4v13, 5v12, 2v15, 7v10, 3v14, 6v11
+  - The same traditional seed-position pattern is generated for other bracket sizes.
+  - Smaller fields receive byes in the bracket positions.
+- **Random** — players are shuffled before the bracket is created.
+- **Current player order** — players are paired in their checked-in order.
 
-Traditional seeding is generated for any power-of-two bracket size and unused positions become byes for smaller fields. Existing winner progression and later-round bracket positions are retained.
+Winners keep their existing bracket positions as they progress.
+
+The existing Groups → Reverse Crossover format remains separate.
 
 No SQL migration is required.
+
+## Vercel build note
+The source was syntax-checked locally with Node. A full `npm install`/production build could not be completed in the build environment because dependency installation timed out, so Vercel remains the final production-build verification.
