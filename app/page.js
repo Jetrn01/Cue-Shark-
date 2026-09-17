@@ -128,7 +128,7 @@ export default function Home() {
   const [modal,setModal]=useState(null),[msg,setMsg]=useState('');
   const [drawSettings,setDrawSettings]=useState({type:'Knockout',race_to:3,group_count:4});
   const [qrData,setQrData]=useState(null);
-  const [playerDB,setPlayerDB]=useState([]);
+  const [playerDB,setPlayerDB]=useState([]),[clubs,setClubs]=useState([]);
   const [profileData,setProfileData]=useState({player:null,matches:[],competitions:[],templates:[],loading:false});
 
   useEffect(()=>{supabase.auth.getSession().then(({data})=>setSession(data.session));
@@ -136,6 +136,7 @@ export default function Home() {
   useEffect(()=>{if(session) loadCompetitions()},[session]);
   useEffect(()=>{if(session) loadPlayerDB()},[session]);
   useEffect(()=>{if(session) loadTemplates()},[session]);
+  useEffect(()=>{if(session) loadClubs()},[session]);
 
   useEffect(()=>{
     if(!session || !selected) return;
@@ -143,13 +144,14 @@ export default function Home() {
     return()=>clearInterval(timer);
   },[session,selected]);
 
-  async function loadPlayerDB(){const {data,error}=await supabase.from('players').select('id,first_name,last_name,display_name,phone,email,club_name,requires_accessible_table').order('display_name',{ascending:true});if(error)setMsg(error.message);else setPlayerDB(data||[])}
+  async function loadPlayerDB(){const {data,error}=await supabase.from('players').select('id,first_name,last_name,display_name,phone,email,club_name,primary_club_id,requires_accessible_table').order('display_name',{ascending:true});if(error)setMsg(error.message);else setPlayerDB(data||[])}
+  async function loadClubs(){const {data,error}=await supabase.from('clubs').select('id,name,city,region,status').order('name');if(error)setMsg(error.message);else setClubs(data||[])}
 
   async function loadCompetitions(){const {data,error}=await supabase.from('competitions').select('*').order('start_date',{ascending:true}); if(error)setMsg(error.message);else setCompetitions(data||[])}
   async function loadTemplates(){const {data,error}=await supabase.from('competition_templates').select('*').eq('is_active',true).order('name'); if(error)setMsg(error.message);else setTemplates(data||[])}
   async function load(c){setSelected(c);
     const [p,m,tDirect]=await Promise.all([
-      supabase.from('competition_players').select('id,player_id,checked_in,players(id,first_name,last_name,display_name,phone,email,club_name,requires_accessible_table)').eq('competition_id',c.id),
+      supabase.from('competition_players').select('id,player_id,checked_in,players(id,first_name,last_name,display_name,phone,email,club_name,primary_club_id,requires_accessible_table)').eq('competition_id',c.id),
       supabase.from('competition_matches').select('*').eq('competition_id',c.id).order('match_number'),
       supabase.from('tournament_tables').select('*').eq('competition_id',c.id).order('table_number')
     ]);
@@ -292,7 +294,8 @@ export default function Home() {
     if(r.error)setAuthMsg(r.error.message)
   }
   async function savePlayer(f){let error;
-    const data={first_name:f.first_name.trim(),last_name:f.last_name.trim(),display_name:`${f.first_name.trim()} ${f.last_name.trim()}`.trim(),phone:f.phone.trim(),email:f.email.trim(),club_name:f.club_name.trim(),requires_accessible_table:!!f.requires_accessible_table};
+    const chosen=clubs.find(c=>c.id===f.club_id);
+    const data={first_name:f.first_name.trim(),last_name:f.last_name.trim(),display_name:`${f.first_name.trim()} ${f.last_name.trim()}`.trim(),phone:f.phone.trim(),email:f.email.trim(),club_name:chosen?.name||f.club_name.trim(),primary_club_id:f.club_id||null,requires_accessible_table:!!f.requires_accessible_table};
     if(f.playerId) ({error}=await supabase.from('players').update(data).eq('id',f.playerId));
     else {
       let existing=null;
@@ -324,7 +327,8 @@ export default function Home() {
   }
 
   async function saveMasterPlayer(f){
-    const data={first_name:f.first_name.trim(),last_name:f.last_name.trim(),display_name:`${f.first_name.trim()} ${f.last_name.trim()}`.trim(),phone:f.phone.trim(),email:f.email.trim(),club_name:f.club_name.trim(),requires_accessible_table:!!f.requires_accessible_table};
+    const chosen=clubs.find(c=>c.id===f.club_id);
+    const data={first_name:f.first_name.trim(),last_name:f.last_name.trim(),display_name:`${f.first_name.trim()} ${f.last_name.trim()}`.trim(),phone:f.phone.trim(),email:f.email.trim(),club_name:chosen?.name||f.club_name.trim(),primary_club_id:f.club_id||null,requires_accessible_table:!!f.requires_accessible_table};
     const r=f.playerId
       ? await supabase.from('players').update(data).eq('id',f.playerId)
       : await supabase.from('players').insert(data);
@@ -981,7 +985,7 @@ export default function Home() {
   const checked=players.filter(p=>p.checked_in).length;
   return <><style>{css}</style><header><div className="appBrand"><PottersMateBrand compact/><span><h1>PottersMate</h1><small>Organiser Dashboard</small></span></div><button onClick={()=>supabase.auth.signOut()}>Log out</button></header>
   {msg&&<div className="notice">{msg}<button onClick={()=>setMsg('')}>✕</button></div>}
-  <div className="layout"><aside><div className="asideTitle"><b>Competitions</b><button className="primary createBtn" onClick={()=>{setSelected(null);setModal({type:'competition',c:null})}}>＋ Create competition</button><button onClick={()=>setModal({type:'templates'})}>🔄 Recurring tournaments</button><button onClick={()=>setModal({type:'playerdb'})}>👥 Player database</button></div>{competitions.map(c=><button className={selected?.id===c.id?'sel':''} key={c.id} onClick={()=>load(c)}>{c.name}<small>{c.start_date||'Date TBC'} · {c.venue||''}</small></button>)}</aside>
+  <div className="layout"><aside><div className="asideTitle"><b>Competitions</b><button className="primary createBtn" onClick={()=>{setSelected(null);setModal({type:'competition',c:null})}}>＋ Create competition</button><button onClick={()=>setModal({type:'templates'})}>🔄 Recurring tournaments</button><button onClick={()=>setModal({type:'playerdb'})}>👥 Player database</button><button onClick={()=>setModal({type:'clubs'})}>🏠 Clubs</button></div>{competitions.map(c=><button className={selected?.id===c.id?'sel':''} key={c.id} onClick={()=>load(c)}>{c.name}<small>{c.start_date||'Date TBC'} · {c.venue||''}</small></button>)}</aside>
   {!selected?<section className="empty"><h2>Select a competition</h2><p>Manage players, tables and match assignments.</p></section>:
   <section className="content"><div className="hero"><div><h2>{selected.name}</h2><p>{selected.venue} · {selected.start_date||'Date TBC'}</p><div className="settingsSummary"><span><b>Format:</b> {selected.format||'Not set'}</span><span><b>Rules:</b> {selected.rules||'Not set'}</span><span><b>Default race:</b> Race to {selected.default_race_to||3}</span></div>
 <div className="tournamentStatusStrip">
@@ -1192,22 +1196,10 @@ function PlayerDatabaseModal({players,currentPlayers,close,add,edit,deletePlayer
   </Modal>
 }
 
-function PlayerModal({p,close,save}){const x=p?.players||{};const[f,setF]=useState({playerId:x.id||'',first_name:x.first_name||'',last_name:x.last_name||'',phone:x.phone||'',email:x.email||'',club_name:x.club_name||''});return <Modal title={p?'Edit player':'Add player'} close={close}><form onSubmit={e=>{e.preventDefault();save(f)}}><label>First name<input required value={f.first_name} onChange={e=>setF({...f,first_name:e.target.value})}/></label><label>Last name<input required value={f.last_name} onChange={e=>setF({...f,last_name:e.target.value})}/></label><label>Phone<input value={f.phone} onChange={e=>setF({...f,phone:e.target.value})}/></label><label>Email<input type="email" value={f.email} onChange={e=>setF({...f,email:e.target.value})}/></label><label>Club<input value={f.club_name} onChange={e=>setF({...f,club_name:e.target.value})}/></label><label className="check"><input type="checkbox" checked={f.requires_accessible_table} onChange={e=>setF({...f,requires_accessible_table:e.target.checked})}/> Requires accessible table ♿</label><div className="ma"><button type="button" onClick={close}>Cancel</button><button className="primary">Save changes</button></div></form></Modal>}
-function MasterPlayerModal({p,close,save,allowAdd}){
-  const[f,setF]=useState({playerId:p?.id||'',first_name:p?.first_name||'',last_name:p?.last_name||'',phone:p?.phone||'',email:p?.email||'',club_name:p?.club_name||'',requires_accessible_table:!!p?.requires_accessible_table,addToCompetition:false});
-  return <Modal title={p?'Edit player':'New player'} close={close}>
-    <form onSubmit={e=>{e.preventDefault();save(f)}}>
-      <label>First name<input required value={f.first_name} onChange={e=>setF({...f,first_name:e.target.value})}/></label>
-      <label>Last name<input required value={f.last_name} onChange={e=>setF({...f,last_name:e.target.value})}/></label>
-      <label>Phone<input value={f.phone} onChange={e=>setF({...f,phone:e.target.value})}/></label>
-      <label>Email<input type="email" value={f.email} onChange={e=>setF({...f,email:e.target.value})}/></label>
-      <label>Club<input value={f.club_name} onChange={e=>setF({...f,club_name:e.target.value})}/></label>
-       <label className="check"><input type="checkbox" checked={f.requires_accessible_table} onChange={e=>setF({...f,requires_accessible_table:e.target.checked})}/> Requires accessible table ♿</label>
-      {allowAdd&&<label className="check"><input type="checkbox" checked={f.addToCompetition} onChange={e=>setF({...f,addToCompetition:e.target.checked})}/> Add to current competition</label>}
-      <div className="ma"><button type="button" onClick={close}>Cancel</button><button className="primary">{p?'Save player':'Create player'}</button></div>
-    </form>
-  </Modal>
-}
+function ClubPicker({clubs,value,onChange}){const [q,setQ]=useState('');const filtered=clubs.filter(c=>c.status==='active'&&`${c.name} ${c.city||''} ${c.region||''}`.toLowerCase().includes(q.toLowerCase())).slice(0,8);return <div className="clubPicker"><label>Primary club</label><input placeholder="Search clubs..." value={q||clubs.find(c=>c.id===value)?.name||''} onChange={e=>{setQ(e.target.value);onChange('')}}/><div className="clubOptions">{filtered.map(c=><button type="button" key={c.id} className={value===c.id?'selectedClub':''} onClick={()=>{onChange(c.id);setQ(c.name)}}>{c.name}{c.city?` · ${c.city}`:''}</button>)}</div>{clubs.length===0&&<small className="muted">No clubs have been created yet. Use Clubs to add one.</small>}</div>}
+function PlayerModal({p,clubs,close,save}){const x=p?.players||{};const[f,setF]=useState({playerId:x.id||'',first_name:x.first_name||'',last_name:x.last_name||'',phone:x.phone||'',email:x.email||'',club_name:x.club_name||'',club_id:x.primary_club_id||'',requires_accessible_table:!!x.requires_accessible_table});return <Modal title={p?'Edit player':'Add player'} close={close}><form onSubmit={e=>{e.preventDefault();save(f)}}><label>First name<input required value={f.first_name} onChange={e=>setF({...f,first_name:e.target.value})}/></label><label>Last name<input required value={f.last_name} onChange={e=>setF({...f,last_name:e.target.value})}/></label><label>Phone<input value={f.phone} onChange={e=>setF({...f,phone:e.target.value})}/></label><label>Email<input type="email" value={f.email} onChange={e=>setF({...f,email:e.target.value})}/></label><ClubPicker clubs={clubs} value={f.club_id} onChange={v=>setF({...f,club_id:v})}/><label className="check"><input type="checkbox" checked={f.requires_accessible_table} onChange={e=>setF({...f,requires_accessible_table:e.target.checked})}/> Requires accessible table ♿</label><div className="ma"><button type="button" onClick={close}>Cancel</button><button className="primary">Save changes</button></div></form></Modal>}
+function MasterPlayerModal({p,clubs,close,save,allowAdd}){const[f,setF]=useState({playerId:p?.id||'',first_name:p?.first_name||'',last_name:p?.last_name||'',phone:p?.phone||'',email:p?.email||'',club_name:p?.club_name||'',club_id:p?.primary_club_id||'',requires_accessible_table:!!p?.requires_accessible_table,addToCompetition:false});return <Modal title={p?'Edit player':'New player'} close={close}><form onSubmit={e=>{e.preventDefault();save(f)}}><label>First name<input required value={f.first_name} onChange={e=>setF({...f,first_name:e.target.value})}/></label><label>Last name<input required value={f.last_name} onChange={e=>setF({...f,last_name:e.target.value})}/></label><label>Phone<input value={f.phone} onChange={e=>setF({...f,phone:e.target.value})}/></label><label>Email<input type="email" value={f.email} onChange={e=>setF({...f,email:e.target.value})}/></label><ClubPicker clubs={clubs} value={f.club_id} onChange={v=>setF({...f,club_id:v})}/><label className="check"><input type="checkbox" checked={f.requires_accessible_table} onChange={e=>setF({...f,requires_accessible_table:e.target.checked})}/> Requires accessible table ♿</label>{allowAdd&&<label className="check"><input type="checkbox" checked={f.addToCompetition} onChange={e=>setF({...f,addToCompetition:e.target.checked})}/> Add to current competition</label>}<div className="ma"><button type="button" onClick={close}>Cancel</button><button className="primary">{p?'Save player':'Create player'}</button></div></form></Modal>}
+function ClubsModal({clubs,close,save}){const [edit,setEdit]=useState(null);const [f,setF]=useState({name:'',city:'',region:'',status:'active'});function start(c){setEdit(c?.id||null);setF({name:c?.name||'',city:c?.city||'',region:c?.region||'',status:c?.status||'active'})}return <Modal title="Club management" close={close}><div className="dbTop"><div><b>{clubs.length} club{clubs.length===1?'':'s'}</b><small className="muted">Manage the clubs available to PottersMate players.</small></div><button className="primary" onClick={()=>start(null)}>＋ New club</button></div>{edit!==null&&<form className="clubForm" onSubmit={e=>{e.preventDefault();save({...f,id:edit})}}><label>Club name<input required value={f.name} onChange={e=>setF({...f,name:e.target.value})}/></label><label>City<input value={f.city} onChange={e=>setF({...f,city:e.target.value})}/></label><label>Region<input value={f.region} onChange={e=>setF({...f,region:e.target.value})}/></label><label>Status<select value={f.status} onChange={e=>setF({...f,status:e.target.value})}><option value="active">Active</option><option value="inactive">Inactive</option></select></label><div className="ma"><button type="button" onClick={()=>setEdit(null)}>Cancel</button><button className="primary">Save club</button></div></form>}{clubs.map(c=><div className="row" key={c.id}><div><b>{c.name}</b><small>{[c.city,c.region].filter(Boolean).join(' · ')||'Location not set'} · {c.status}</small></div><div className="actions"><button onClick={()=>start(c)}>✏️ Edit</button></div></div>)}</Modal>}
 
 function CompetitionModal({c,close,save}){
   const[f,setF]=useState({
