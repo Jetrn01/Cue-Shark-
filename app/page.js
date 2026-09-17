@@ -294,7 +294,13 @@ export default function Home() {
   async function savePlayer(f){let error;
     const data={first_name:f.first_name.trim(),last_name:f.last_name.trim(),display_name:`${f.first_name.trim()} ${f.last_name.trim()}`.trim(),phone:f.phone.trim(),email:f.email.trim(),club_name:f.club_name.trim(),requires_accessible_table:!!f.requires_accessible_table};
     if(f.playerId) ({error}=await supabase.from('players').update(data).eq('id',f.playerId));
-    else {const r=await supabase.from('players').insert(data).select().single();error=r.error;if(!error)({error}=await supabase.from('competition_players').insert({competition_id:selected.id,player_id:r.data.id,checked_in:false}))}
+    else {
+      let existing=null;
+      if(data.email){const q=await supabase.from('players').select('*').ilike('email',data.email).limit(1);existing=q.data?.[0]||null;if(q.error){error=q.error}}
+      const r=existing?{data:existing,error:null}:await supabase.from('players').insert(data).select().single();
+      error=error||r.error;
+      if(!error)({error}=await supabase.from('competition_players').insert({competition_id:selected.id,player_id:r.data.id,checked_in:false}))
+    }
     if(error)setMsg(error.message);else{setModal(null);load(selected)}
   }
   async function addExistingPlayerToCompetition(p){
@@ -923,7 +929,7 @@ export default function Home() {
   }
 
 
-  if(!session)return <><style>{css}</style><main className="auth"><div className="card"><div className="authBrandBox"><PottersMateBrand/><div className="authBrandTag">TOURNAMENT MANAGEMENT FOR CUE SPORTS</div></div><p>Competition management for cue-sport clubs.</p><form onSubmit={auth}><input type="email" placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)} required/><input type="password" placeholder="Password" value={password} onChange={e=>setPassword(e.target.value)} required/><button className="primary">{mode==='login'?'Log in':'Create organiser account'}</button></form>{authMsg&&<p className="error">{authMsg}</p>}<button className="link" onClick={()=>setMode(mode==='login'?'signup':'login')}>{mode==='login'?'Need an organiser account?':'Already have an account? Log in'}</button></div></main></>;
+  if(!session)return <><style>{css}</style><main className="auth"><div className="card"><div className="authBrandBox"><PottersMateBrand/><div className="authBrandTag">TOURNAMENT MANAGEMENT FOR CUE SPORTS</div></div><p>Competition management for cue-sport clubs.</p><form onSubmit={auth}><input type="email" placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)} required/><input type="password" placeholder="Password" value={password} onChange={e=>setPassword(e.target.value)} required/><button className="primary">{mode==='login'?'Log in':'Create organiser account'}</button></form>{authMsg&&<p className="error">{authMsg}</p>}<button className="link" onClick={()=>setMode(mode==='login'?'signup':'login')}>{mode==='login'?'Need an organiser account?':'Already have an account? Log in'}</button><div className="playerEntry"><span>Are you a player?</span><a href="/player/login">Player login / registration →</a></div></div></main></>;
 
   const checked=players.filter(p=>p.checked_in).length;
   return <><style>{css}</style><header><div className="appBrand"><PottersMateBrand compact/><span><h1>PottersMate</h1><small>Organiser Dashboard</small></span></div><button onClick={()=>supabase.auth.signOut()}>Log out</button></header>
@@ -1330,5 +1336,5 @@ const css=`*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;ba
 
 .commandProgress{margin-top:12px;padding:13px 15px;border:1px solid #e1e6ee;border-radius:12px;background:#fff}.commandProgressTop{display:flex;justify-content:space-between;align-items:end;gap:12px}.commandProgressTop div{display:grid;gap:2px}.commandProgressTop span{font-size:12px;color:#667085}.progressTrack{height:7px;border-radius:99px;background:#edf0f4;overflow:hidden;margin-top:9px}.progressFill{height:100%;border-radius:99px;background:var(--pm-purple);transition:width .3s ease}.attentionPanel{margin-top:12px;border:1px solid #f2d29a;border-radius:12px;background:#fffaf0;overflow:hidden}.attentionTitle{font-weight:900;padding:11px 14px;border-bottom:1px solid #f2d29a}.attentionItem{display:flex;justify-content:space-between;gap:15px;padding:9px 14px;border-top:1px solid #f7e3be;font-size:12px}.attentionItem:first-of-type{border-top:0}.attentionItem strong{color:#7a4b00}.attentionItem span{color:#8a5a10;text-align:right}.controlTablesSubhead{margin-top:13px}.controlTablesSubhead h4{margin-bottom:0}
 @media(max-width:800px){.attentionItem{display:grid;gap:3px}.attentionItem span{text-align:left}.commandProgressTop{align-items:center}}
-
+.playerEntry{margin-top:16px;padding-top:14px;border-top:1px solid #edf0f4;display:grid;gap:4px;text-align:center;font-size:12px;color:#667085}.playerEntry a{color:#6f2dbd;font-weight:800;text-decoration:none}
 `;
