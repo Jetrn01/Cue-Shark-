@@ -901,11 +901,12 @@ export default function Home() {
       {matches.some(m=>m.group_name)&&matches.filter(m=>m.group_name).every(m=>m.status==='completed')&&<button onClick={generateReverseCrossover}>🏆 Generate Reverse Crossover</button>}
       {matches.length===0&&<p className="muted">No matches created yet.</p>}
     </div>
-    {matches.map(m=><div className={`row ${m.status==='bye'?'byeRow':''}`} key={m.id}>
+    {matches.filter(m=>!(m.status==='waiting' && !m.player1_id && !m.player2_id)).map(m=><div className={`row ${m.status==='bye'?'byeRow':''}`} key={m.id}>
       <div><b>Match {m.match_number} · {m.group_name?`Group ${m.group_name} · `:''}Round {m.round_number}</b><small>
-        {matchPlayersLabel(m)} · Race to {m.race_to} · {matchStatusLabel(m)}
+        {m.status==='bye' && m.winner_id
+          ? <><strong>{playerName(m.winner_id)} — BYE</strong> · Advances automatically</>
+          : <>{matchPlayersLabel(m)} · Race to {m.race_to} · {matchStatusLabel(m)}</>}
         {m.status==='completed' && <> · <strong>Result: {m.score1 ?? 0} – {m.score2 ?? 0}</strong>{m.winner_id ? <> · Winner: {playerName(m.winner_id)}</> : null}{Number(m.race_to)===1 && m.winner_balls !== null && m.winner_balls !== undefined ? <> · {m.winner_balls} balls remaining</> : null}</>}
-        {m.status==='bye' && m.winner_id && <> · <strong>Bye: {playerName(m.winner_id)} advances automatically</strong></>}
       </small></div>
       {m.status==='bye'
         ? <span className="byeBadge">BYE</span>
