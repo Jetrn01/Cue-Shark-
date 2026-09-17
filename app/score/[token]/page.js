@@ -19,6 +19,7 @@ export default function ScorePage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [pendingWinner, setPendingWinner] = useState(null);
+  const [refreshTimer, setRefreshTimer] = useState(null);
 
   useEffect(() => {
     if (token) load(token);

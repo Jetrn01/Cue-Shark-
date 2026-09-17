@@ -80,7 +80,7 @@ export default function PlayerLogin(){
  async function logout(){await supabase.auth.signOut();setPlayer(null);setMatches([]);setCompetitions([]);setTables([]);setPeople({})}
 
  const played=matches.filter(m=>m.status==='completed'&&m.winner_id);const wins=played.filter(m=>m.winner_id===player?.id).length;const losses=played.filter(m=>m.loser_id===player?.id).length;
- const current=useMemo(()=>matches.find(m=>!['completed','bye','pending_confirmation','disputed'].includes(m.status)),[matches]);
+ const current=useMemo(()=>matches.find(m=>m.status!=='completed'&&m.status!=='bye'),[matches]);
  const compMap=Object.fromEntries(competitions.map(c=>[c.id,c]));
  const opponent=current?(current.player1_id===player?.id?current.player2_id:current.player1_id):null;
  const opponentName=opponent?displayName(people[opponent]):'TBC';

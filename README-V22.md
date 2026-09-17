@@ -11,5 +11,3 @@ This version adds a result-integrity safeguard:
 7. The older public frame-increment RPC is removed so there is no alternate scoring path that bypasses confirmation.
 
 Run `v22-score-confirmation.sql` once in Supabase SQL Editor after the existing PottersMate SQL, then deploy the project normally through GitHub/Vercel.
-
-V22.1 fix: the public scoring page no longer replaces the scoring UI with a full-page loading state during its 5-second background refresh. This prevents the Race-to-1 ball-count buttons from flashing/disappearing while a result is being entered.

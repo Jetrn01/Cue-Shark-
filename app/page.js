@@ -440,6 +440,30 @@ export default function Home() {
     if(error)setMsg(`Could not reopen result: ${error.message}`);else{await load(selected);setMsg(`Match ${m.match_number} has been reopened for correction.`);}
   }
 
+  function openCorrection(m){
+    if(!m)return;
+    setMsg('');
+    setModal({type:'resultCorrection',m});
+  }
+
+  async function correctMatchResult(f,m){
+    if(!m)return;
+    const score1=Number(f.score1), score2=Number(f.score2);
+    const balls=f.winner_balls===''||f.winner_balls===null||f.winner_balls===undefined?null:Number(f.winner_balls);
+    if(!Number.isInteger(score1)||!Number.isInteger(score2)||score1<0||score2<0){setMsg('Scores must be whole numbers of 0 or more.');return false;}
+    if(Number(m.race_to)===1 && (balls===null||!Number.isInteger(balls)||balls<0||balls>7)){setMsg('For Race to 1, balls remaining must be a whole number from 0 to 7.');return false;}
+    if(score1>Number(m.race_to)||score2>Number(m.race_to)){setMsg(`Score cannot exceed the race length (Race to ${m.race_to}).`);return false;}
+    if(score1===score2 && (score1>=Number(m.race_to)||score2>=Number(m.race_to))){setMsg('A completed match cannot finish tied.');return false;}
+    if(score1!==Number(m.race_to) && score2!==Number(m.race_to)){setMsg(`A final result must have one player reaching Race to ${m.race_to}.`);return false;}
+    if(!window.confirm(`Make this corrected result official?\n\n${playerName(m.player1_id)} ${score1}–${score2} ${playerName(m.player2_id)}${Number(m.race_to)===1?`\nWinner balls remaining: ${balls}`:''}`))return false;
+    const {error}=await supabase.rpc('organiser_correct_match_result',{p_match_id:m.id,p_score1:score1,p_score2:score2,p_winner_balls:balls});
+    if(error){setMsg(`Could not correct result: ${error.message}`);return false;}
+    setModal(null);
+    await load(selected);
+    setMsg(`Match ${m.match_number} corrected and made official.`);
+    return true;
+  }
+
   async function quickAssign(m,t){
     if(!m || !t || t.status==='unavailable' || m.status!=='scheduled') return;
     const needsAccessible=[m.player1_id,m.player2_id].some(pid=>players.find(x=>x.player_id===pid)?.players?.requires_accessible_table);
@@ -827,8 +851,8 @@ export default function Home() {
       {(confirmationPending.length>0 || disputed.length>0 || accessibleReady.length>0 || (ready.length>0 && available.length===0) || inaccessible.length>0) &&
         <div className="attentionPanel">
           <div className="attentionTitle">⚠️ Needs attention</div>
-          {confirmationPending.map(m=><div className="attentionItem resultReviewItem" key={`confirm-${m.id}`}><div><strong>🔐 Match {m.match_number} awaiting confirmation</strong><span>{playerName(m.player1_id)} {m.score1??0}–{m.score2??0} {playerName(m.player2_id)} · {m.p1_confirmed?'✓ P1 confirmed':'P1 waiting'} · {m.p2_confirmed?'✓ P2 confirmed':'P2 waiting'}</span></div><div className="reviewActions"><button className="primary" onClick={()=>approveMatchResult(m)}>Approve</button><button onClick={()=>reopenMatchResult(m)}>Reopen</button></div></div>)}
-          {disputed.map(m=><div className="attentionItem resultReviewItem" key={`dispute-${m.id}`}><div><strong>⚠️ Match {m.match_number} disputed</strong><span>{playerName(m.player1_id)} {m.score1??0}–{m.score2??0} {playerName(m.player2_id)}{m.dispute_reason?` · ${m.dispute_reason}`:''}</span></div><div className="reviewActions"><button className="primary" onClick={()=>approveMatchResult(m)}>Approve stored result</button><button onClick={()=>reopenMatchResult(m)}>Reopen</button></div></div>)}
+          {confirmationPending.map(m=><div className="attentionItem resultReviewItem" key={`confirm-${m.id}`}><div><strong>🔐 Match {m.match_number} awaiting confirmation</strong><span>{playerName(m.player1_id)} {m.score1??0}–{m.score2??0} {playerName(m.player2_id)} · {m.p1_confirmed?'✓ P1 confirmed':'P1 waiting'} · {m.p2_confirmed?'✓ P2 confirmed':'P2 waiting'}</span></div><div className="reviewActions"><button className="primary" onClick={()=>approveMatchResult(m)}>Approve</button><button onClick={()=>openCorrection(m)}>Correct result</button><button onClick={()=>reopenMatchResult(m)}>Reopen</button></div></div>)}
+          {disputed.map(m=><div className="attentionItem resultReviewItem" key={`dispute-${m.id}`}><div><strong>⚠️ Match {m.match_number} disputed</strong><span>{playerName(m.player1_id)} {m.score1??0}–{m.score2??0} {playerName(m.player2_id)}{m.dispute_reason?` · ${m.dispute_reason}`:''}</span></div><div className="reviewActions"><button className="primary" onClick={()=>openCorrection(m)}>Correct result</button><button onClick={()=>approveMatchResult(m)}>Approve stored result</button><button onClick={()=>reopenMatchResult(m)}>Reopen</button></div></div>)}
           {accessibleReady.length>0 && eligibleAvailable(accessibleReady[0]).length===0 &&
             <div className="attentionItem"><strong>♿ {accessibleReady.length} accessibility-priority match{accessibleReady.length===1?'':'es'}</strong><span>No suitable accessible table is currently available.</span></div>}
           {ready.length>0 && available.length===0 &&
@@ -1030,6 +1054,7 @@ export default function Home() {
   {modal?.type==='draw'&&<DrawModal selected={selected} players={players} matches={matches} settings={drawSettings} setSettings={setDrawSettings} close={()=>setModal(null)} generate={generateDraw} generateGroups={generateGroupsReverseCrossover}/>}
   {modal?.type==='masterPlayer'&&<MasterPlayerModal p={modal.p} allowAdd={!!selected} close={()=>setModal(null)} save={saveMasterPlayer}/>}
   {modal?.type==='player'&&<PlayerModal p={modal.p} close={()=>setModal(null)} save={savePlayer}/>}
+  {modal?.type==='resultCorrection'&&<ResultCorrectionModal m={modal.m} close={()=>setModal(null)} save={correctMatchResult} playerName={playerName}/>}
   {modal?.type==='table'&&<TableModal t={modal.t} close={()=>setModal(null)} save={saveTable}/>}
   {modal?.type==='competition'&&<CompetitionModal c={modal.c} close={()=>setModal(null)} save={saveCompetition}/>}
   {modal?.type==='templates'&&<RecurringModal templates={templates} close={()=>setModal(null)} newTemplate={()=>setModal({type:'template'})} edit={t=>setModal({type:'template',t})} start={startFromTemplate} newSeason={startNewSeason} deactivate={deactivateTemplate} openTables={openTemplateTables}/>}
@@ -1260,6 +1285,30 @@ function TemplateModal({t,close,save}){
   </Modal>
 }
 
+function ResultCorrectionModal({m,close,save,playerName}){
+  const [f,setF]=useState({score1:String(m?.score1??''),score2:String(m?.score2??''),winner_balls:m?.winner_balls===null||m?.winner_balls===undefined?'':String(m.winner_balls)});
+  const [localError,setLocalError]=useState('');
+  if(!m)return null;
+  const race=Number(m.race_to)||1;
+  const winnerId=Number(f.score1)>Number(f.score2)?m.player1_id:Number(f.score2)>Number(f.score1)?m.player2_id:null;
+  const submit=async e=>{e.preventDefault();setLocalError('');const ok=await save(f,m);if(!ok)setLocalError('Please correct the highlighted result and try again.');};
+  return <Modal title={`Correct disputed result · Match ${m.match_number}`} close={close}>
+    <div className="correctionAlert"><strong>⚠️ Organiser correction</strong><span>The player-submitted result is not official. Correct it here without using the live scoring screen.</span></div>
+    <div className="correctionMatch"><strong>{playerName(m.player1_id)} <span>vs</span> {playerName(m.player2_id)}</strong><small>Race to {race}{m.dispute_reason?` · Dispute: ${m.dispute_reason}`:''}</small></div>
+    {(localError)&&<div className="formError">{localError}</div>}
+    <form onSubmit={submit}>
+      <div className="scoreEditGrid">
+        <label>{playerName(m.player1_id)}<input type="number" min="0" max={race} step="1" value={f.score1} onChange={e=>setF({...f,score1:e.target.value})}/></label>
+        <div className="scoreDash">–</div>
+        <label>{playerName(m.player2_id)}<input type="number" min="0" max={race} step="1" value={f.score2} onChange={e=>setF({...f,score2:e.target.value})}/></label>
+      </div>
+      {race===1&&<label>Winner's balls remaining<select value={f.winner_balls} onChange={e=>setF({...f,winner_balls:e.target.value})}><option value="">Select…</option>{[0,1,2,3,4,5,6,7].map(n=><option key={n} value={n}>{n}</option>)}</select></label>}
+      <div className="correctionWinner"><span>Winner</span><strong>{winnerId?playerName(winnerId):'Enter a valid final score'}</strong></div>
+      <div className="ma"><button type="button" onClick={close}>Cancel</button><button className="primary" type="submit">Save corrected result &amp; make official</button></div>
+    </form>
+  </Modal>
+}
+
 function TableModal({t,close,save}){const[f,setF]=useState({table_number:t?.table_number||'',table_type:t?.table_type||'Standard',notes:t?.notes||'',is_accessible:!!t?.is_accessible,status:t?.status||'available'});return <Modal title={t?'Edit table':'Add table'} close={close}><form onSubmit={e=>{e.preventDefault();save(f,t)}}><label>Table number<input required type="number" min="1" value={f.table_number} onChange={e=>setF({...f,table_number:e.target.value})}/></label><label>Table type<select value={f.table_type} onChange={e=>setF({...f,table_type:e.target.value})}><option>Standard</option><option>Accessible</option><option>Reserved / Unavailable</option></select></label><label className="check"><input type="checkbox" checked={f.is_accessible} onChange={e=>setF({...f,is_accessible:e.target.checked})}/> Accessible table ♿</label><label>Table notes<textarea value={f.notes} onChange={e=>setF({...f,notes:e.target.value})}/></label><div className="ma"><button type="button" onClick={close}>Cancel</button><button className="primary">Save</button></div></form></Modal>}
 
 
@@ -1360,4 +1409,5 @@ const css=`*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;ba
 .commandProgress{margin-top:12px;padding:13px 15px;border:1px solid #e1e6ee;border-radius:12px;background:#fff}.commandProgressTop{display:flex;justify-content:space-between;align-items:end;gap:12px}.commandProgressTop div{display:grid;gap:2px}.commandProgressTop span{font-size:12px;color:#667085}.progressTrack{height:7px;border-radius:99px;background:#edf0f4;overflow:hidden;margin-top:9px}.progressFill{height:100%;border-radius:99px;background:var(--pm-purple);transition:width .3s ease}.attentionPanel{margin-top:12px;border:1px solid #f2d29a;border-radius:12px;background:#fffaf0;overflow:hidden}.attentionTitle{font-weight:900;padding:11px 14px;border-bottom:1px solid #f2d29a}.attentionItem{display:flex;justify-content:space-between;gap:15px;padding:9px 14px;border-top:1px solid #f7e3be;font-size:12px}.attentionItem:first-of-type{border-top:0}.attentionItem strong{color:#7a4b00}.attentionItem span{color:#8a5a10;text-align:right}.resultReviewItem{align-items:center}.resultReviewItem>div:first-child{display:grid;gap:3px;min-width:0}.reviewActions{display:flex;gap:6px;flex-wrap:wrap}.resultPendingNote{color:#7a4b00}.resultDisputedNote{color:#b42318}@media(max-width:800px){.resultReviewItem{display:grid}.reviewActions{justify-content:flex-start}}.controlTablesSubhead{margin-top:13px}.controlTablesSubhead h4{margin-bottom:0}
 @media(max-width:800px){.attentionItem{display:grid;gap:3px}.attentionItem span{text-align:left}.commandProgressTop{align-items:center}}
 .playerEntry{margin-top:16px;padding-top:14px;border-top:1px solid #edf0f4;display:grid;gap:4px;text-align:center;font-size:12px;color:#667085}.playerEntry a{color:#6f2dbd;font-weight:800;text-decoration:none}
+.correctionAlert{padding:11px 12px;border:1px solid #f2d29a;border-radius:10px;background:#fffaf0;color:#7a4b00;display:grid;gap:3px;margin-bottom:12px}.correctionAlert span{font-size:12px;color:#8a5a10}.correctionMatch{padding:12px;border:1px solid #e3e7ee;border-radius:10px;background:#f8f9fc;text-align:center;margin-bottom:12px}.correctionMatch strong{display:block;font-size:18px}.correctionMatch strong span{color:#667085;padding:0 5px}.correctionMatch small{display:block;color:#667085;margin-top:4px}.formError{padding:10px 12px;border:1px solid #f3b4b4;border-radius:9px;background:#fff1f1;color:#b42318;font-weight:700;margin-bottom:12px}.scoreEditGrid{display:grid;grid-template-columns:1fr 34px 1fr;gap:8px;align-items:end}.scoreEditGrid label{margin:0}.scoreDash{text-align:center;font-size:24px;font-weight:900;padding-bottom:9px}.correctionWinner{margin-top:10px;padding:10px 12px;border-radius:9px;background:#f7f3ff;border:1px solid #d7c8f4}.correctionWinner span{display:block;color:#667085;font-size:11px}.correctionWinner strong{display:block;color:#53319c;margin-top:3px}.reviewActions button{white-space:nowrap}@media(max-width:600px){.scoreEditGrid{grid-template-columns:1fr 24px 1fr}.scoreEditGrid input{font-size:18px}}
 `;
