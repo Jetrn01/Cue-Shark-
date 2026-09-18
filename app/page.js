@@ -971,10 +971,11 @@ export default function Home() {
     return `${playerName(m.player1_id)} vs ${playerName(m.player2_id)}`;
   }
 
-  function roundName(round,totalRounds){
-    if(round===totalRounds) return 'Final';
-    if(round===totalRounds-1) return 'Semi-Finals';
-    if(round===totalRounds-2) return 'Quarter-Finals';
+  function roundName(round,totalRounds,matchCount){
+    if(matchCount===1) return 'Final';
+    if(matchCount===2) return 'Semi-Finals';
+    if(matchCount===4) return 'Quarter-Finals';
+    if(matchCount===8) return 'Round of 16';
     return `Round ${round}`;
   }
 
@@ -984,7 +985,7 @@ export default function Home() {
     for(let r=1;r<=maxRound;r++) rounds.push(matches.filter(m=>Number(m.round_number)===r).sort((a,b)=>a.match_number-b.match_number));
     return <div className="bracket">
       {rounds.map((round,i)=><div className="bracketRound" key={i}>
-        <h4>{roundName(i+1,maxRound)}</h4>
+        <h4>{roundName(i+1,maxRound,round.length)}</h4>
         <div className="bracketMatches">
           {round.map(m=><div className={`bracketMatch ${m.status==='completed'?'done':''}`} key={m.id}>
             <div className="bracketMatchNo">Match {m.match_number}</div>
@@ -1247,7 +1248,7 @@ export default function Home() {
   {matches.length>0 && <Panel title="Live Tournament Control">
     <TournamentControl tables={tables} matches={matches} playerName={playerName}/>
   </Panel>}
-  {matches.length>0 && (selected.format||'').toLowerCase()==='knockout' && <Panel title="Knockout Bracket">
+  {matches.length>0 && ['knockout','groups → knockout'].includes((selected.format||'').toLowerCase()) && <Panel title="Knockout Bracket">
     <p className="muted">Winners advance automatically when their match is completed.</p>
     <KnockoutBracket matches={matches} playerName={playerName}/>
   </Panel>}
