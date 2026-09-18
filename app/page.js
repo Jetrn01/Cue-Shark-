@@ -1321,10 +1321,16 @@ function DrawModal({selected,players,matches=[],settings,setSettings,close,gener
         <option value="seeded">Seeded qualification order</option>
         <option value="random">Randomise qualifiers</option>
       </select></label>
-    </>}
-    <label>Race length<select disabled={drawLocked} value={settings.race_to} onChange={e=>setSettings({...settings,race_to:Number(e.target.value)})}>
-      {[1,2,3,5,7,9].map(n=><option key={n} value={n}>Race to {n}</option>)}
-    </select></label>
+    {isGroupsKO ? <>
+  <label>Group stage race length<select disabled={drawLocked} value={settings.group_race_to||1} onChange={e=>setSettings({...settings,group_race_to:Number(e.target.value)})}>
+    {[1,2,3,5,7,9].map(n=><option key={n} value={n}>Race to {n}</option>)}
+  </select></label>
+  <label>Knockout race length<select disabled={drawLocked} value={settings.knockout_race_to||2} onChange={e=>setSettings({...settings,knockout_race_to:Number(e.target.value)})}>
+    {[1,2,3,5,7,9].map(n=><option key={n} value={n}>Race to {n}</option>)}
+  </select></label>
+</> : <label>Race length<select disabled={drawLocked} value={settings.race_to} onChange={e=>setSettings({...settings,race_to:Number(e.target.value)})}>
+  {[1,2,3,5,7,9].map(n=><option key={n} value={n}>Race to {n}</option>)}
+</select></label>}
     {drawLocked && <div className="drawLockedNote">🔒 <strong>Draw locked.</strong> Matches have already been completed or are in progress, so draw settings cannot be changed.</div>}
     {!drawLocked && matches.length>0 && <div className="drawWarningNote">⚠️ <strong>Existing draw:</strong> generating again will replace the current scheduled draw. This is only available before play has started.</div>}
     <div className="settingNote">
