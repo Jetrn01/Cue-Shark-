@@ -753,7 +753,7 @@ export default function Home() {
     const groupCount=Number(settings.group_count||4);
     if(checkedPlayers.length<2){setMsg('Check in at least 2 players before creating groups.');return;}
     if(groupCount<2 || groupCount>Math.floor(checkedPlayers.length/2)){setMsg(`Choose between 2 and ${Math.floor(checkedPlayers.length/2)} groups for ${checkedPlayers.length} players.`);return;}
-    if(settings.type==='Groups → Reverse Crossover' && groupCount%2!==0){setMsg('Reverse Crossover requires an even number of groups. Use Groups → Knockout for 5 groups.');return;}
+    if(settings.type==='Reverse Cross' && groupCount%2!==0){setMsg('Reverse Crossover requires an even number of groups. Use Groups → Knockout for 5 groups.');return;}
     if(matches.length){
       if(matches.some(m=>['completed','in_progress','active'].includes(m.status))){setMsg('This competition already has matches in progress or completed. A new draw cannot replace them.');return;}
       if(!window.confirm('Replace the existing draw? This removes the current scheduled matches and creates the new group-stage draw.'))return;
@@ -773,6 +773,18 @@ export default function Home() {
     if(!rows.length){setMsg('Could not create group matches.');return;}
     const {error}=await supabase.from('competition_matches').insert(rows);
     if(error){setMsg(`Could not create group draw: ${error.message}`);return;}
+
+    if(settings.type==='Seeded 16'){
+      if(checkedPlayers.length<16){setMsg('Seeded 16 requires at least 16 checked-in players.');return;}
+      const knockoutRace=Number(settings.knockout_race_to||settings.race_to||selected.default_race_to||3);
+      const bracket=buildEmptyKnockoutRows(selected.id,rows.length+1,16,knockoutRace);
+      if(!bracket.length){setMsg('Could not create the 16-player knockout bracket.');return;}
+      const {error:bracketError}=await supabase.from('competition_matches').insert(bracket);
+      if(bracketError){await load(selected);setModal(null);setMsg(`Group draw created, but the Seeded 16 knockout bracket could not be created: ${bracketError.message}`);return;}
+      await load(selected);setModal(null);
+      setMsg(`${checkedPlayers.length} players placed into ${groupCount} groups. The Seeded 16 knockout bracket is ready and will be populated from the top 16 overall after the group stage is complete.`);
+      return;
+    }
 
     if(settings.type==='Groups → Knockout'){
       const maxPlayersPerGroup=Math.max(...groups.map(g=>g.length));
@@ -866,6 +878,32 @@ export default function Home() {
       const rows=groupMatches.filter(m=>m.group_name===g);
       ranked[g]=rankGroupPlayers(rows);
       if(ranked[g].length<qualifiersPerGroup){setMsg(`Group ${g} does not contain enough players for ${qualifiersPerGroup} qualifiers.`);return;}
+    }
+
+    if(settings.type==='Seeded 16' || settings.group_knockout_mode==='top16_overall'){
+      const overall=rankGroupPlayers(groupMatches).slice(0,16);
+      if(overall.length<16){setMsg(`There are only ${overall.length} eligible players. Seeded 16 requires at least 16 players.`);return;}
+      const firstPairs=[];
+      for(let i=0;i<8;i++) firstPairs.push([overall[i].id,overall[15-i].id]);
+      const race=Number(settings.knockout_race_to||settings.race_to||selected.default_race_to||3);
+      if(existingKnockout.length){
+        const firstRound=existingKnockout.filter(m=>Number(m.round_number)===2).sort((a,b)=>(a.match_number||0)-(b.match_number||0));
+        if(existingKnockout.length!==15 || firstRound.length!==8){setMsg('The existing knockout bracket is not a 16-player bracket. Create a new group draw to rebuild it.');return;}
+        for(let i=0;i<firstRound.length;i++){
+          const [p1,p2]=firstPairs[i];
+          const {error}=await supabase.from('competition_matches').update({player1_id:p1,player2_id:p2,race_to:race,status:'scheduled',score1:0,score2:0,table_id:null,winner_id:null,loser_id:null}).eq('id',firstRound[i].id);
+          if(error){setMsg(`Could not populate Seeded 16 Match ${firstRound[i].match_number}: ${error.message}`);return;}
+        }
+        await load(selected);setMsg('Seeded 16 populated: the top 16 overall are ranked by wins, then ball differential, and seeded 1–16.');return;
+      }
+      const startMatchNo=Math.max(...workingMatches.map(m=>Number(m.match_number)||0),0)+1;
+      const bracket=buildEmptyKnockoutRows(selected.id,startMatchNo,16,race);
+      if(!bracket.length){setMsg('Could not create the 16-player knockout bracket.');return;}
+      const firstRound=bracket.filter(m=>Number(m.round_number)===2).sort((a,b)=>a.match_number-b.match_number);
+      firstRound.forEach((m,i)=>{const [p1,p2]=firstPairs[i];m.player1_id=p1;m.player2_id=p2;m.status='scheduled';});
+      const {error}=await supabase.from('competition_matches').insert(bracket);
+      if(error){setMsg(`Could not create Seeded 16 knockout: ${error.message}`);return;}
+      await load(selected);setMsg('Seeded 16 created from the top 16 overall, ranked by wins then ball differential.');return;
     }
 
     const qualified=[];
@@ -994,7 +1032,7 @@ export default function Home() {
     const target=2**Math.ceil(Math.log2(crossover.length));
     while(crossover.length<target)crossover.push({id:crypto.randomUUID(),competition_id:selected.id,match_number:matchNo++,round_number:2,group_name:null,player1_id:null,player2_id:null,race_to:Number(drawSettings.knockout_race_to||drawSettings.race_to||selected.default_race_to||3),status:'waiting',score1:0,score2:0,table_id:null,next_match_id:null,next_slot:null,winner_id:null,loser_id:null});
     const rounds=[crossover]; let prev=crossover,roundNo=3;
-    while(prev.length>1){const cur=[];for(let i=0;i<prev.length/2;i++)cur.push({id:crypto.randomUUID(),competition_id:selected.id,match_number:matchNo++,round_number:roundNo,group_name:null,player1_id:null,player2_id:null,race_to:Number(selected.default_race_to||3),status:'waiting',score1:0,score2:0,table_id:null,next_match_id:null,next_slot:null,winner_id:null,loser_id:null});rounds.push(cur);prev=cur;roundNo++;}
+    while(prev.length>1){const cur=[];for(let i=0;i<prev.length/2;i++)cur.push({id:crypto.randomUUID(),competition_id:selected.id,match_number:matchNo++,round_number:roundNo,group_name:null,player1_id:null,player2_id:null,race_to:Number(drawSettings.knockout_race_to||drawSettings.race_to||selected.default_race_to||3),status:'waiting',score1:0,score2:0,table_id:null,next_match_id:null,next_slot:null,winner_id:null,loser_id:null});rounds.push(cur);prev=cur;roundNo++;}
     const all=rounds.flat();
     for(let r=0;r<rounds.length-1;r++)for(let i=0;i<rounds[r].length;i++){rounds[r][i].next_match_id=rounds[r+1][Math.floor(i/2)].id;rounds[r][i].next_slot=(i%2)+1;}
     const possible=new Map(rounds[0].map(m=>[m.id,!!(m.player1_id||m.player2_id)]));
@@ -1354,7 +1392,7 @@ export default function Home() {
 
   <Panel title="Matches & Table Assignment">
     <div className="drawTools">
-      <button className="primary" onClick={()=>{if((selected.format||'').toLowerCase()==='groups → knockout')setDrawSettings(s=>({...s,type:'Groups → Knockout'}));else if((selected.format||'').toLowerCase()==='groups → reverse crossover')setDrawSettings(s=>({...s,type:'Groups → Reverse Crossover'}));setModal({type:'draw'})}}>🎱 {matches.length?'Edit / Regenerate Draw':'Create Draw'}</button>
+      <button className="primary" onClick={()=>{if((selected.format||'').toLowerCase()==='groups → knockout')setDrawSettings(s=>({...s,type:'Groups → Knockout'}));else if((selected.format||'').toLowerCase()==='groups → reverse crossover')setDrawSettings(s=>({...s,type:'Reverse Cross'}));setModal({type:'draw'})}}>🎱 {matches.length?'Edit / Regenerate Draw':'Create Draw'}</button>
       {matches.some(m=>m.group_name)&&<>{matches.some(m=>Number(m.round_number)>1 && !m.group_name)?<button onClick={()=>generateGroupKnockout(drawSettings)} disabled={matches.some(m=>Number(m.round_number)>1 && !m.group_name && m.status!=='waiting')}>🏆 {matches.some(m=>Number(m.round_number)>1 && !m.group_name && m.status==='waiting')?'Populate':'Generate'} {Math.max(2, Number(drawSettings.group_count||4))*Math.max(1,Number(drawSettings.qualifiers_per_group||4))===16?'Round of 16':'Knockout'} from qualifiers</button>:<button onClick={generateReverseCrossover} disabled={matches.some(m=>Number(m.round_number)>1 && !m.group_name)}>🏆 Generate Reverse Crossover</button>}</>}
       {matches.length===0&&<p className="muted">No matches created yet.</p>}
     </div>
@@ -1373,7 +1411,7 @@ export default function Home() {
   {matches.length>0 && <Panel title="Live Tournament Control">
     <TournamentControl tables={tables} matches={matches} playerName={playerName}/>
   </Panel>}
-  {matches.length>0 && ['knockout','groups → knockout'].includes((selected.format||'').toLowerCase()) && <Panel title="Knockout Bracket">
+  {matches.length>0 && ['knockout','groups → knockout','reverse cross','seeded 16'].includes((selected.format||'').toLowerCase()) && <Panel title="Knockout Bracket">
     <p className="muted">Winners advance automatically when their match is completed.</p>
     <KnockoutBracket matches={matches} playerName={playerName}/>
   </Panel>}
@@ -1421,8 +1459,9 @@ function DrawModal({selected,players,matches=[],settings,setSettings,close,gener
   const maxEvenGroups=Math.min(8,Math.floor(checked/2));
   const groupOptions=[2,3,4,5,6,7,8].filter(n=>n<=Math.floor(checked/2));
   const isGroupsKO=settings.type==='Groups → Knockout';
-  const isReverse=settings.type==='Groups → Reverse Crossover';
-  const isGroups=isGroupsKO||isReverse;
+  const isReverse=settings.type==='Reverse Cross';
+  const isSeeded16=settings.type==='Seeded 16';
+  const isGroups=isGroupsKO||isReverse||isSeeded16;
   const groupCount=groupOptions.includes(Number(settings.group_count))?Number(settings.group_count):(groupOptions[0]||2);
   const maxGroupSize=groupCount>0?Math.ceil(checked/groupCount):0;
   const qualifierOptions=Array.from({length:Math.max(1,maxGroupSize)},(_,i)=>i+1);
@@ -1431,10 +1470,10 @@ function DrawModal({selected,players,matches=[],settings,setSettings,close,gener
   return <Modal title="Draw Builder" close={close}>
     <p className="muted"><b>{checked}</b> checked-in players.</p>
     <label>Draw type<select disabled={drawLocked} value={settings.type} onChange={e=>setSettings({...settings,type:e.target.value})}>
-      <option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Groups → Knockout</option><option>Groups → Reverse Crossover</option>
+      <option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Groups → Knockout</option><option>Reverse Cross</option><option>Seeded 16</option>
     </select></label>
-    {isGroups && <label>Number of groups<select disabled={drawLocked} value={groupCount} onChange={e=>setSettings({...settings,group_count:Number(e.target.value)})}>
-      {groupOptions.length?groupOptions.map(n=><option key={n} value={n}>{n} groups</option>):<option value="2">2 groups</option>}
+    {isGroups && <label>Number of groups<select disabled={drawLocked || isSeeded16} value={isSeeded16?4:groupCount} onChange={e=>setSettings({...settings,group_count:Number(e.target.value)})}>
+      {isSeeded16?<option value="4">4 groups</option>:groupOptions.length?groupOptions.map(n=><option key={n} value={n}>{n} groups</option>):<option value="2">2 groups</option>}
     </select></label>}
     {isGroupsKO && <>
       <label>Players advancing from each group<select disabled={drawLocked} value={qualifiers} onChange={e=>setSettings({...settings,qualifiers_per_group:Number(e.target.value)})}>
@@ -1465,10 +1504,12 @@ function DrawModal({selected,players,matches=[],settings,setSettings,close,gener
       {settings.type==='Random Draw'&&'Players are shuffled before the knockout draw.'}
       {isGroupsKO&&`Group stage first: ${groupCount} groups, then the top ${qualifiers} from each group advance. PottersMate automatically calculates the next power-of-two knockout field and any wildcard places needed. Wildcards are ranked by most wins, then highest cumulative ball differential.`}
       {isReverse&&`Players are split as evenly as possible into ${groupCount} groups. After the group stage, groups are paired A vs B, C vs D, etc. Within each pair, 1st plays last, 2nd plays second-last, and so on.`}
+      {isSeeded16&&'All group results are combined. The top 16 players overall are selected using wins first, then ball differential, and seeded 1–16 for the knockout.'}
     </div>
     {isGroupsKO && checked>=2 && <div className="drawPreviewNote">{(() => { const plan=qualificationPlan(groupCount,qualifiers); const stage=plan.target===16?'Round of 16':plan.target===8?'Quarter-final / 8-player knockout':plan.target===4?'4-player knockout':plan.target===32?'Round of 32':`${plan.target}-player knockout`; return <><strong>{checked} players → {groupCount} groups → {plan.automatic} automatic qualifiers.</strong> Top {qualifiers} from every group advance. {plan.wildcards>0 ? <>{plan.wildcards} wildcard{plan.wildcards===1?'':'s'} will be selected from the non-qualifiers using <strong>most wins → highest cumulative ball differential</strong>. Then {plan.target} players enter the {stage}.</> : <>No wildcard is required. The {plan.target}-player field proceeds directly to the {stage}.</>}</>; })()}</div>}
     {isReverse && checked>=2 && <div className="drawPreviewNote"><strong>{checked} players:</strong> {groupCount} groups of about {Math.floor(checked/groupCount)}–{Math.ceil(checked/groupCount)} players.</div>}
-    <div className="ma"><button type="button" onClick={close}>Close</button><button className="primary" disabled={drawLocked || checked<2 || (isGroups && (groupOptions.length===0 || !groupOptions.includes(groupCount)))} onClick={()=>isGroups?generateGroups({...settings,type:isGroupsKO?'Groups → Knockout':'Groups → Reverse Crossover',group_count:groupCount,qualifiers_per_group:qualifiers,group_knockout_mode:settings.group_knockout_mode||'group_crossover'}):generate(settings)}>{matches.length?'Regenerate Draw':'Generate Draw'}</button></div>
+    {isSeeded16 && checked>=16 && <div className="drawPreviewNote"><strong>{checked} players → {groupCount} groups → top 16 overall.</strong> After the group stage: 1 vs 16, 2 vs 15, 3 vs 14, and so on.</div>}
+    <div className="ma"><button type="button" onClick={close}>Close</button><button className="primary" disabled={drawLocked || checked<2 || (isGroups && (groupOptions.length===0 || !groupOptions.includes(groupCount)))} onClick={()=>isGroups?generateGroups({...settings,type:isGroupsKO?'Groups → Knockout':isSeeded16?'Seeded 16':'Reverse Cross',group_count:isSeeded16?4:groupCount,qualifiers_per_group:isSeeded16?4:qualifiers,group_knockout_mode:isSeeded16?'top16_overall':(settings.group_knockout_mode||'group_crossover')}):generate(settings)}>{matches.length?'Regenerate Draw':'Generate Draw'}</button></div>
   </Modal>
 }
 
@@ -1585,7 +1626,7 @@ function CompetitionModal({c,close,save}){
       <label>Venue<input value={f.venue} onChange={e=>setF({...f,venue:e.target.value})}/></label>
       <label>Date<input type="date" value={f.start_date||''} onChange={e=>setF({...f,start_date:e.target.value})}/></label>
       <label>Format<select value={f.format} onChange={e=>setF({...f,format:e.target.value})}>
-        <option>Singles</option><option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Groups → Reverse Crossover</option><option>Groups → Knockout</option><option>Doubles</option><option>Teams</option><option>Custom</option>
+        <option>Singles</option><option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Reverse Cross</option><option>Groups → Knockout</option><option>Doubles</option><option>Teams</option><option>Custom</option>
       </select></label>
       <label>Rules<select value={f.rules} onChange={e=>setF({...f,rules:e.target.value})}><option>CNZ Rules</option><option>International Rules</option><option>Custom</option></select></label>
       <label>Default race length<select value={f.default_race_to} onChange={e=>setF({...f,default_race_to:Number(e.target.value)})}>{[1,2,3,5,7,9].map(n=><option key={n} value={n}>Race to {n}</option>)}</select></label>
@@ -1637,7 +1678,7 @@ function TemplateModal({t,close,save}){
       <label>Tournament name<input required value={f.name} placeholder="Thursday Night 8-Ball" onChange={e=>setF({...f,name:e.target.value})}/></label>
       <label>Venue<input value={f.venue} placeholder="Cambridge Cossie Club" onChange={e=>setF({...f,venue:e.target.value})}/></label>
       <label>Repeats every<select value={f.day_of_week} onChange={e=>setF({...f,day_of_week:Number(e.target.value)})}>{['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'].map((d,i)=><option key={d} value={i}>{d}</option>)}</select></label>
-      <label>Format<select value={f.format} onChange={e=>setF({...f,format:e.target.value})}><option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Groups → Reverse Crossover</option><option>Groups → Knockout</option><option>Singles</option><option>Doubles</option><option>Teams</option><option>Custom</option></select></label>
+      <label>Format<select value={f.format} onChange={e=>setF({...f,format:e.target.value})}><option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Reverse Cross</option><option>Groups → Knockout</option><option>Singles</option><option>Doubles</option><option>Teams</option><option>Custom</option></select></label>
       <label>Rules<select value={f.rules} onChange={e=>setF({...f,rules:e.target.value})}><option>CNZ Rules</option><option>International Rules</option><option>Custom</option></select></label>
       <label>Default race length<select value={f.default_race_to} onChange={e=>setF({...f,default_race_to:Number(e.target.value)})}>{[1,2,3,5,7,9].map(n=><option key={n} value={n}>Race to {n}</option>)}</select></label>
       <label className="checkLine"><input type="checkbox" checked={f.season_enabled} onChange={e=>setF({...f,season_enabled:e.target.checked})}/> Run this as a season</label>
