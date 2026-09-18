@@ -791,21 +791,25 @@ export default function Home() {
       const {error}=await supabase.from('competition_matches').update(u).eq('id',m.id);
       if(error){setMsg(`Test failed on Match ${m.match_number}: ${error.message}`);await load(selected);return;}
     }
+    const {data:freshMatches,error:freshError}=await supabase.from('competition_matches').select('*').eq('competition_id',selected.id).order('match_number');
+    if(freshError){setMsg(`TEST COMPLETE, but could not refresh matches for automatic knockout population: ${freshError.message}`);await load(selected);return;}
+    await generateGroupKnockout(drawSettings,freshMatches||[]);
     await load(selected);
-    setMsg(`TEST COMPLETE: The ${remaining.length} remaining group results were simulated as confirmed by both players. Your existing completed result was preserved. Automatic knockout population should now run.`);
+    setMsg(`TEST COMPLETE: The ${remaining.length} remaining group results were simulated as confirmed by both players. Your existing completed result was preserved, and automatic knockout population was triggered.`);
   }
 
-  async function generateGroupKnockout(settings=drawSettings){
+  async function generateGroupKnockout(settings=drawSettings,sourceMatches=null){
+    const workingMatches=sourceMatches||workingMatches;
     if(!selected)return;
-    const groupMatches=matches.filter(m=>m.group_name && Number(m.round_number)===1);
+    const groupMatches=workingMatches.filter(m=>m.group_name && Number(m.round_number)===1);
     if(!groupMatches.length){setMsg('Create the group stage first.');return;}
 
     const groupNames=[...new Set(groupMatches.map(m=>m.group_name))].sort();
     const groupComplete=groupMatches.every(m=>m.status==='completed');
-    const existingKnockout=matches.filter(m=>Number(m.round_number)>1 && !m.group_name).sort((a,b)=>(a.match_number||0)-(b.match_number||0));
+    const existingKnockout=workingMatches.filter(m=>Number(m.round_number)>1 && !m.group_name).sort((a,b)=>(a.match_number||0)-(b.match_number||0));
 
     if(!groupComplete && existingKnockout.length){
-      setMsg('The knockout bracket is already created. Complete all group-stage matches and then populate it from the qualifiers.');
+      setMsg('The knockout bracket is already created. Complete all group-stage workingMatches and then populate it from the qualifiers.');
       return;
     }
 
@@ -820,7 +824,7 @@ export default function Home() {
 
     if(!groupComplete){
       if(targetSize<2){setMsg('Not enough players to create a knockout bracket.');return;}
-      const startMatchNo=Math.max(...matches.map(m=>Number(m.match_number)||0),0)+1;
+      const startMatchNo=Math.max(...workingMatches.map(m=>Number(m.match_number)||0),0)+1;
       const bracket=buildEmptyKnockoutRows(selected.id,startMatchNo,targetSize,race);
       if(!bracket.length){setMsg(`Could not create the ${targetSize}-player knockout bracket.`);return;}
       const {error}=await supabase.from('competition_matches').insert(bracket);
@@ -908,7 +912,7 @@ export default function Home() {
       return;
     }
 
-    const startMatchNo=Math.max(...matches.map(m=>Number(m.match_number)||0),0)+1;
+    const startMatchNo=Math.max(...workingMatches.map(m=>Number(m.match_number)||0),0)+1;
     const bracket=buildEmptyKnockoutRows(selected.id,startMatchNo,targetSize,race);
     if(!bracket.length){setMsg(`Could not create the ${targetSize}-player knockout bracket.`);return;}
     const firstRound=bracket.filter(m=>Number(m.round_number)===2).sort((a,b)=>a.match_number-b.match_number);
