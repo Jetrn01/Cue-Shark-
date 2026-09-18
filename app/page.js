@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import QRCode from 'qrcode';
 
@@ -222,6 +222,7 @@ export default function Home() {
   const [players,setPlayers]=useState([]),[tables,setTables]=useState([]),[matches,setMatches]=useState([]);
   const [modal,setModal]=useState(null),[msg,setMsg]=useState('');
   const [drawSettings,setDrawSettings]=useState({type:'Knockout',race_to:3,group_race_to:1,knockout_race_to:2,group_count:4,qualifiers_per_group:4,group_knockout_mode:'group_crossover'});
+  const autoPopulateInFlight=useRef(false);
   const [qrData,setQrData]=useState(null);
   const [playerDB,setPlayerDB]=useState([]),[clubs,setClubs]=useState([]);
   const [profileData,setProfileData]=useState({player:null,matches:[],competitions:[],templates:[],loading:false});
@@ -238,6 +239,17 @@ export default function Home() {
     const timer=setInterval(()=>load(selected),5000);
     return()=>clearInterval(timer);
   },[session,selected]);
+
+  useEffect(()=>{
+    if(!session || !selected || (selected.format||'').toLowerCase()!=='groups → knockout' || autoPopulateInFlight.current) return;
+    const groupMatches=matches.filter(m=>m.group_name && Number(m.round_number)===1);
+    const knockoutMatches=matches.filter(m=>Number(m.round_number)>1 && !m.group_name);
+    if(!groupMatches.length || !knockoutMatches.length || !groupMatches.every(m=>m.status==='completed')) return;
+    const firstRound=knockoutMatches.filter(m=>Number(m.round_number)===2);
+    if(!firstRound.length || firstRound.some(m=>m.player1_id || m.player2_id)) return;
+    autoPopulateInFlight.current=true;
+    generateGroupKnockout(drawSettings).finally(()=>{autoPopulateInFlight.current=false;});
+  },[session,selected,matches,drawSettings]);
 
   async function loadPlayerDB(){const {data,error}=await supabase.from('players').select('id,first_name,last_name,display_name,phone,email,club_name,primary_club_id,requires_accessible_table').order('display_name',{ascending:true});if(error)setMsg(error.message);else setPlayerDB(data||[])}
   async function loadClubs(){const {data,error}=await supabase.from('clubs').select('id,name,city,region,status').order('name');if(error)setMsg(error.message);else setClubs(data||[])}
