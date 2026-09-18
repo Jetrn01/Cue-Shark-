@@ -685,7 +685,7 @@ export default function Home() {
       const {error}=await supabase.from('competition_matches').delete().eq('competition_id',selected.id);
       if(error){setMsg(error.message);return;}
     }
-    const race=Number(settings.race_to||selected.default_race_to||3);
+    const race=Number(settings.group_race_to||settings.race_to||selected.default_race_to||3);
     const groups=Array.from({length:groupCount},()=>[]);
     checkedPlayers.forEach((id,i)=>groups[i%groupCount].push(id));
     const rows=[]; let n=1;
