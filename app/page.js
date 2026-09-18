@@ -775,6 +775,36 @@ export default function Home() {
     setMsg(`${checkedPlayers.length} players placed into ${groupCount} balanced groups. Complete the group stage, then generate the Reverse Crossover.`);
   }
 
+  async function testCompleteGroupStageWithConfirmations(){
+    if(!selected)return;
+    if((selected.format||'').toLowerCase()!=='groups → knockout'){setMsg('This test is only available for a Groups → Knockout competition.');return;}
+    const groupMatches=matches.filter(m=>m.group_name && Number(m.round_number)===1);
+    if(!groupMatches.length){setMsg('Create a Groups → Knockout draw first.');return;}
+    if(groupMatches.some(m=>m.status==='completed')){setMsg('Some group matches are already completed. Use a fresh test competition for this test.');return;}
+    if(!window.confirm('TEST ONLY: Mark all group matches as completed with BOTH players confirmed. This creates simulated results so we can test automatic qualification into the knockout. Continue?'))return;
+    const updates=groupMatches.map((m,i)=>({
+      id:m.id,
+      score1:1,
+      score2:0,
+      winner_balls:Number(m.race_to)===1?0:null,
+      winner_id:m.player1_id,
+      loser_id:m.player2_id,
+      status:'completed',
+      p1_confirmed:true,
+      p2_confirmed:true,
+      dispute_reason:null
+    }));
+    for(const u of updates){
+      const {error}=await supabase.from('competition_matches').update({
+        score1:u.score1,score2:u.score2,winner_balls:u.winner_balls,winner_id:u.winner_id,loser_id:u.loser_id,
+        status:u.status,p1_confirmed:u.p1_confirmed,p2_confirmed:u.p2_confirmed,dispute_reason:u.dispute_reason
+      }).eq('id',u.id);
+      if(error){setMsg(`Test failed on Match ${groupMatches.find(m=>m.id===u.id)?.match_number||''}: ${error.message}`);await load(selected);return;}
+    }
+    await load(selected);
+    setMsg('TEST COMPLETE: All group results were simulated as confirmed by both players. Automatic knockout population should now run.');
+  }
+
   async function generateGroupKnockout(settings=drawSettings){
     if(!selected)return;
     const groupMatches=matches.filter(m=>m.group_name && Number(m.round_number)===1);
@@ -1300,6 +1330,7 @@ export default function Home() {
 
   <Panel title="Matches & Table Assignment">
     <div className="drawTools">
+      {matches.some(m=>m.group_name && Number(m.round_number)===1) && (selected.format||'').toLowerCase()==='groups → knockout' && <button onClick={testCompleteGroupStageWithConfirmations}>🧪 TEST: Complete Groups + Both Confirm</button>}
       <button className="primary" onClick={()=>{if((selected.format||'').toLowerCase()==='groups → knockout')setDrawSettings(s=>({...s,type:'Groups → Knockout'}));else if((selected.format||'').toLowerCase()==='groups → reverse crossover')setDrawSettings(s=>({...s,type:'Groups → Reverse Crossover'}));setModal({type:'draw'})}}>🎱 {matches.length?'Edit / Regenerate Draw':'Create Draw'}</button>
       {matches.some(m=>m.group_name)&&<>{(selected.format||'').toLowerCase()==='groups → knockout'?<button onClick={()=>generateGroupKnockout(drawSettings)} disabled={matches.some(m=>Number(m.round_number)>1 && !m.group_name && m.status!=='waiting')}>🏆 {matches.some(m=>Number(m.round_number)>1 && !m.group_name && m.status==='waiting')?'Populate':'Generate'} {Math.max(2, Number(drawSettings.group_count||4))*Math.max(1,Number(drawSettings.qualifiers_per_group||4))===16?'Round of 16':'Knockout'} from qualifiers</button>:<button onClick={generateReverseCrossover} disabled={matches.some(m=>Number(m.round_number)>1 && !m.group_name)}>🏆 Generate Reverse Crossover</button>}</>}
       {matches.length===0&&<p className="muted">No matches created yet.</p>}
