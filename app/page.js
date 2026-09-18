@@ -534,14 +534,41 @@ export default function Home() {
     if(id){
       const t=tables.find(x=>x.id===id);
       const needsAccessible=[m.player1_id,m.player2_id].some(pid=>players.find(x=>x.player_id===pid)?.players?.requires_accessible_table);
-      if(needsAccessible && !t?.is_accessible){setMsg('This match includes a player who requires an accessible table. Please assign an accessible table.');return;}
+      if(needsAccessible && !t?.is_accessible){
+        setMsg('This match includes a player who requires an accessible table. Please assign an accessible table.');
+        return false;
+      }
+
+      // Prevent a player from being assigned to two live matches at once.
+      const playerIds=[m.player1_id,m.player2_id].filter(Boolean);
+      const playerConflict=matches.find(x=>
+        x.id!==m.id &&
+        x.table_id &&
+        x.status!=='completed' &&
+        playerIds.some(pid=>pid===x.player1_id || pid===x.player2_id)
+      );
+      if(playerConflict){
+        const conflictPlayer=playerIds.find(pid=>pid===playerConflict.player1_id || pid===playerConflict.player2_id);
+        setMsg(playerName(conflictPlayer)+' is already playing Match '+playerConflict.match_number+' on another table.');
+        return false;
+      }
+
+      // Prevent two matches from being assigned to the same table.
+      const tableConflict=matches.find(x=>x.id!==m.id && x.table_id===id && x.status!=='completed');
+      if(tableConflict){
+        setMsg('Table '+(t?.table_number||'')+' is already occupied by Match '+tableConflict.match_number+'.');
+        return false;
+      }
     }
+
     const previous=m.table_id;
-    if(previous===id)return;
+    if(previous===id)return true;
     if(previous)await supabase.from('tournament_tables').update({status:'available'}).eq('id',previous);
     if(id)await supabase.from('tournament_tables').update({status:'occupied'}).eq('id',id);
     const r=await supabase.from('competition_matches').update({table_id:id||null}).eq('id',m.id);
-    if(r.error)setMsg(r.error.message);else load(selected)
+    if(r.error){setMsg(r.error.message);return false;}
+    await load(selected);
+    return true;
   }
 
   async function approveMatchResult(m){
@@ -586,8 +613,8 @@ export default function Home() {
     if(!m || !t || t.status==='unavailable' || m.status!=='scheduled') return;
     const needsAccessible=[m.player1_id,m.player2_id].some(pid=>players.find(x=>x.player_id===pid)?.players?.requires_accessible_table);
     if(needsAccessible && !t.is_accessible){setMsg(`Match ${m.match_number} requires an accessible table.`);return;}
-    await assign(m,t.id);
-    setMsg(`Match ${m.match_number} assigned to Table ${t.table_number}.`);
+    const assigned=await assign(m,t.id);
+    if(assigned) setMsg(`Match ${m.match_number} assigned to Table ${t.table_number}.`);
   }
 
   async function assignNextReady(){
