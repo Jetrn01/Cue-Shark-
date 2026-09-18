@@ -754,7 +754,7 @@ export default function Home() {
   async function generateGroupsReverseCrossover(settings=drawSettings){
     if(!selected)return;
     const checkedPlayers=players.filter(p=>p.checked_in).map(p=>p.player_id).filter(Boolean);
-    const groupCount=(settings.type==='Seeded 16'||settings.type==='Reverse Cross')?4:Number(settings.group_count||4);
+    const groupCount=settings.type==='Seeded 16'?4:Number(settings.group_count||4);
     if(checkedPlayers.length<2){setMsg('Check in at least 2 players before creating groups.');return;}
     if(settings.type==='Seeded 16' && checkedPlayers.length<16){setMsg('Seeded 16 requires at least 16 checked-in players.');return;}
     if(groupCount<2 || groupCount>Math.floor(checkedPlayers.length/2)){setMsg(`Choose between 2 and ${Math.floor(checkedPlayers.length/2)} groups for ${checkedPlayers.length} players.`);return;}
