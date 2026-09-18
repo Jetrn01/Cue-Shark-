@@ -810,7 +810,10 @@ export default function Home() {
     }
 
     const playerCounts=groupNames.map(g=>groupMatches.filter(m=>m.group_name===g).reduce((ids,m)=>{ids.add(m.player1_id);ids.add(m.player2_id);return ids;},new Set()).size);
-    const qualifiersPerGroup=Math.max(1,Math.min(Number(settings.qualifiers_per_group||1),Math.min(...playerCounts)));
+    const existingTarget=existingKnockout.length ? existingKnockout.length+1 : 0;
+    const bracketImpliedQualifiers=(existingTarget===16 && groupNames.length===5) ? 3 : null;
+    const requestedQualifiers=bracketImpliedQualifiers || Number(settings.qualifiers_per_group||1);
+    const qualifiersPerGroup=Math.max(1,Math.min(requestedQualifiers,Math.min(...playerCounts)));
     const plan=qualificationPlan(groupNames.length,qualifiersPerGroup);
     const targetSize=plan.target;
     const race=Number(settings.knockout_race_to||settings.race_to||selected.default_race_to||3);
