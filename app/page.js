@@ -754,11 +754,11 @@ export default function Home() {
   async function generateGroupsReverseCrossover(settings=drawSettings){
     if(!selected)return;
     const checkedPlayers=players.filter(p=>p.checked_in).map(p=>p.player_id).filter(Boolean);
-    const groupCount=settings.type==='Seeded 16'?4:Number(settings.group_count||4);
+    const groupCount=(settings.type==='Seeded 16'||settings.type==='Reverse Cross')?4:Number(settings.group_count||4);
     if(checkedPlayers.length<2){setMsg('Check in at least 2 players before creating groups.');return;}
     if(settings.type==='Seeded 16' && checkedPlayers.length<16){setMsg('Seeded 16 requires at least 16 checked-in players.');return;}
     if(groupCount<2 || groupCount>Math.floor(checkedPlayers.length/2)){setMsg(`Choose between 2 and ${Math.floor(checkedPlayers.length/2)} groups for ${checkedPlayers.length} players.`);return;}
-    if(settings.type==='Reverse Cross' && groupCount%2!==0){setMsg('Reverse Cross requires an even number of groups. Use Groups → Knockout for 5 groups.');return;}
+    if(settings.type==='Reverse Cross' && groupCount!==4){setMsg('Reverse Cross uses 4 groups so the top 4 from each group can make the 16-player knockout.');return;}
     if(matches.length){
       if(matches.some(m=>['completed','in_progress','active'].includes(m.status))){setMsg('This competition already has matches in progress or completed. A new draw cannot replace them.');return;}
       if(!window.confirm('Replace the existing draw? This removes the current scheduled matches and creates the new group-stage draw.'))return;
@@ -779,15 +779,17 @@ export default function Home() {
     const {error}=await supabase.from('competition_matches').insert(rows);
     if(error){setMsg(`Could not create group draw: ${error.message}`);return;}
 
-    if(settings.type==='Seeded 16'){
-      if(checkedPlayers.length<16){setMsg('Seeded 16 requires at least 16 checked-in players.');return;}
+    if(settings.type==='Seeded 16' || settings.type==='Reverse Cross'){
+      if(checkedPlayers.length<16){setMsg(settings.type+' requires at least 16 checked-in players.');return;}
       const knockoutRace=Number(settings.knockout_race_to||settings.race_to||selected.default_race_to||3);
       const bracket=buildEmptyKnockoutRows(selected.id,rows.length+1,16,knockoutRace);
-      if(!bracket.length){setMsg('Could not create the 16-player knockout bracket.');return;}
+      if(!bracket.length){setMsg('Could not create the 16-player knockout bracket for '+settings.type+'.');return;}
       const {error:bracketError}=await supabase.from('competition_matches').insert(bracket);
-      if(bracketError){await load(selected);setModal(null);setMsg(`Group draw created, but the Seeded 16 knockout bracket could not be created: ${bracketError.message}`);return;}
+      if(bracketError){await load(selected);setModal(null);setMsg('Group draw created, but the 16-player knockout bracket could not be created: '+bracketError.message);return;}
       await load(selected);setModal(null);
-      setMsg(`${checkedPlayers.length} players placed into ${groupCount} groups. All players play the group stage; the top 16 overall will advance to the Seeded 16 knockout after the group stage is complete.`);
+      setMsg(settings.type==='Seeded 16'
+        ? checkedPlayers.length+' players placed into 4 groups. All players play the group stage; the top 16 overall will advance to the Seeded 16 knockout after the group stage is complete.'
+        : checkedPlayers.length+' players placed into 4 groups. All players play the group stage; the top 4 from each group will make the Reverse Cross 16-player knockout after the group stage is complete.');
       return;
     }
 
@@ -883,6 +885,46 @@ export default function Home() {
       const rows=groupMatches.filter(m=>m.group_name===g);
       ranked[g]=rankGroupPlayers(rows);
       if(ranked[g].length<qualifiersPerGroup){setMsg(`Group ${g} does not contain enough players for ${qualifiersPerGroup} qualifiers.`);return;}
+    }
+
+    if(settings.type==='Reverse Cross'){
+      const topByGroup=groupNames.map(g=>ranked[g].slice(0,4));
+      if(topByGroup.some(q=>q.length<4)){setMsg('Each Reverse Cross group must contain at least 4 eligible players.');return;}
+
+      const firstPairs=[];
+      // Reverse Cross 16: A1 v B4, A2 v B3, B1 v A4, B2 v A3,
+      // then the same pattern for C/D.
+      for(let i=0;i<groupNames.length;i+=2){
+        const left=topByGroup[i], right=topByGroup[i+1];
+        firstPairs.push([left[0]?.id||null,right[3]?.id||null]);
+        firstPairs.push([left[1]?.id||null,right[2]?.id||null]);
+        firstPairs.push([right[0]?.id||null,left[3]?.id||null]);
+        firstPairs.push([right[1]?.id||null,left[2]?.id||null]);
+      }
+
+      const race=Number(settings.knockout_race_to||settings.race_to||selected.default_race_to||3);
+      if(existingKnockout.length){
+        const firstRound=existingKnockout.filter(m=>Number(m.round_number)===2).sort((a,b)=>(a.match_number||0)-(b.match_number||0));
+        if(existingKnockout.length!==15 || firstRound.length!==8){setMsg('The existing Reverse Cross bracket is not a 16-player bracket. Create a new group draw to rebuild it.');return;}
+        for(let i=0;i<firstRound.length;i++){
+          const [p1,p2]=firstPairs[i];
+          const {error}=await supabase.from('competition_matches').update({player1_id:p1,player2_id:p2,race_to:race,status:'scheduled',score1:0,score2:0,table_id:null,winner_id:null,loser_id:null}).eq('id',firstRound[i].id);
+          if(error){setMsg('Could not populate Reverse Cross Match '+firstRound[i].match_number+': '+error.message);return;}
+        }
+        await load(selected);
+        setMsg('Reverse Cross populated: the top 4 from each group qualify, then the groups cross in reverse order (A1 v B4, A2 v B3, B1 v A4, B2 v A3, and C/D the same).');
+        return;
+      }
+      const startMatchNo=Math.max(...workingMatches.map(m=>Number(m.match_number)||0),0)+1;
+      const bracket=buildEmptyKnockoutRows(selected.id,startMatchNo,16,race);
+      if(!bracket.length){setMsg('Could not create the 16-player Reverse Cross knockout bracket.');return;}
+      const firstRound=bracket.filter(m=>Number(m.round_number)===2).sort((a,b)=>a.match_number-b.match_number);
+      firstRound.forEach((m,i)=>{const [p1,p2]=firstPairs[i];m.player1_id=p1;m.player2_id=p2;m.status='scheduled';});
+      const {error}=await supabase.from('competition_matches').insert(bracket);
+      if(error){setMsg('Could not create Reverse Cross knockout: '+error.message);return;}
+      await load(selected);
+      setMsg('Reverse Cross created from the top 4 of each group: A1 v B4, A2 v B3, B1 v A4, B2 v A3, with the same pattern for C/D.');
+      return;
     }
 
     if(settings.type==='Seeded 16' || settings.group_knockout_mode==='top16_overall'){
@@ -1467,7 +1509,7 @@ function DrawModal({selected,players,matches=[],settings,setSettings,close,gener
   const isReverse=settings.type==='Reverse Cross';
   const isSeeded16=settings.type==='Seeded 16';
   const isGroups=isGroupsKO||isReverse||isSeeded16;
-  const groupCount=isSeeded16?4:(groupOptions.includes(Number(settings.group_count))?Number(settings.group_count):(groupOptions[0]||2));
+  const groupCount=(isSeeded16||isReverse)?4:(groupOptions.includes(Number(settings.group_count))?Number(settings.group_count):(groupOptions[0]||2));
   const maxGroupSize=groupCount>0?Math.ceil(checked/groupCount):0;
   const qualifierOptions=Array.from({length:Math.max(1,maxGroupSize)},(_,i)=>i+1);
   const qualifiers=Math.min(Number(settings.qualifiers_per_group)||Math.min(4,maxGroupSize||1),maxGroupSize||1);
@@ -1477,7 +1519,7 @@ function DrawModal({selected,players,matches=[],settings,setSettings,close,gener
     <label>Draw type<select disabled={drawLocked} value={settings.type} onChange={e=>setSettings({...settings,type:e.target.value})}>
       <option>Knockout</option><option>Round Robin</option><option>Random Draw</option><option>Groups → Knockout</option><option>Reverse Cross</option><option>Seeded 16</option>
     </select></label>
-    {isGroups && <label>Number of groups<select disabled={drawLocked || isSeeded16} value={isSeeded16?4:groupCount} onChange={e=>setSettings({...settings,group_count:Number(e.target.value)})}>
+    {isGroups && <label>Number of groups<select disabled={drawLocked || isSeeded16 || isReverse} value={(isSeeded16||isReverse)?4:groupCount} onChange={e=>setSettings({...settings,group_count:Number(e.target.value)})}>
       {isSeeded16?<option value="4">4 groups</option>:groupOptions.length?groupOptions.map(n=><option key={n} value={n}>{n} groups</option>):<option value="2">2 groups</option>}
     </select></label>}
     {isGroupsKO && <>
@@ -1508,7 +1550,7 @@ function DrawModal({selected,players,matches=[],settings,setSettings,close,gener
       {settings.type==='Round Robin'&&'Every checked-in player plays every other player once.'}
       {settings.type==='Random Draw'&&'Players are shuffled before the knockout draw.'}
       {isGroupsKO&&`Group stage first: ${groupCount} groups, then the top ${qualifiers} from each group advance. PottersMate automatically calculates the next power-of-two knockout field and any wildcard places needed. Wildcards are ranked by most wins, then highest cumulative ball differential.`}
-      {isReverse&&`Players are split as evenly as possible into ${groupCount} groups. After the group stage, groups are paired A vs B, C vs D, etc. Within each pair, 1st plays last, 2nd plays second-last, and so on.`}
+      {isReverse&&'Reverse Cross uses 4 groups. All checked-in players play the group stage, regardless of how many enter. The top 4 from each group qualify for the 16-player knockout: A1 vs B4, A2 vs B3, B1 vs A4, B2 vs A3, with the same pattern for C and D.'}
       {isSeeded16&&'Seeded 16 is for 16 or more players. All checked-in players enter the group stage across 4 groups; there is no maximum group-stage player count. After the group stage, the top 16 overall are selected using wins first, then ball differential, and seeded 1–16 for the knockout.'}
     </div>
     {isGroupsKO && checked>=2 && <div className="drawPreviewNote">{(() => { const plan=qualificationPlan(groupCount,qualifiers); const stage=plan.target===16?'Round of 16':plan.target===8?'Quarter-final / 8-player knockout':plan.target===4?'4-player knockout':plan.target===32?'Round of 32':`${plan.target}-player knockout`; return <><strong>{checked} players → {groupCount} groups → {plan.automatic} automatic qualifiers.</strong> Top {qualifiers} from every group advance. {plan.wildcards>0 ? <>{plan.wildcards} wildcard{plan.wildcards===1?'':'s'} will be selected from the non-qualifiers using <strong>most wins → highest cumulative ball differential</strong>. Then {plan.target} players enter the {stage}.</> : <>No wildcard is required. The {plan.target}-player field proceeds directly to the {stage}.</>}</>; })()}</div>}
