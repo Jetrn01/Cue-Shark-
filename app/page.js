@@ -743,7 +743,7 @@ export default function Home() {
 
     let firstPairs=[];
     const mode=settings.group_knockout_mode||'group_crossover';
-    if(mode==='group_crossover' && groupNames.length===5 && qualifiersPerGroup===3 && qualified.length===16){
+    if((mode==='group_crossover' || mode==='five_group_reverse') && groupNames.length===5 && qualifiersPerGroup===3 && qualified.length===16){
       // Five groups / top 3 / one wildcard = 16-player Round of 16.
       // Use a five-group reverse crossover: each group winner plays the
       // third-place player from the next group, keeping all group winners
@@ -765,7 +765,7 @@ export default function Home() {
       firstPairs.push([q2[wildcardOpponent]?.id||null,wildcard?.id||null]);
 
       const remaining=[];
-      for(let offset=2;offset<=4;offset++) remaining.push(q2[(wi+offset)%5]);
+      for(let offset=2;offset<=5;offset++) remaining.push(q2[(wi+offset)%5]);
       firstPairs.push([remaining[0]?.id||null,remaining[2]?.id||null]);
       firstPairs.push([remaining[1]?.id||null,remaining[3]?.id||null]);
     } else if(mode==='group_crossover' && groupNames.length%2===0 && qualified.length===groupNames.length*qualifiersPerGroup){
@@ -1316,6 +1316,7 @@ function DrawModal({selected,players,matches=[],settings,setSettings,close,gener
       </select></label>
       <label>Knockout draw<select disabled={drawLocked} value={settings.group_knockout_mode||'group_crossover'} onChange={e=>setSettings({...settings,group_knockout_mode:e.target.value})}>
         <option value="group_crossover">Group crossover — A1 vs B4, A2 vs B3</option>
+        <option value="five_group_reverse">Five-group reverse crossover — 5 groups / Top 3 / 1 wildcard</option>
         <option value="seeded">Seeded qualification order</option>
         <option value="random">Randomise qualifiers</option>
       </select></label>
