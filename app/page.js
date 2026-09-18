@@ -784,7 +784,7 @@ export default function Home() {
       for(let i=0;i<qualified.length;i+=2) firstPairs.push([qualified[i]?.id||null,qualified[i+1]?.id||null]);
     }
 
-    const race=Number(settings.race_to||selected.default_race_to||3);
+    const race=Number(settings.knockout_race_to||settings.race_to||selected.default_race_to||3);
     let matchNo=Math.max(...matches.map(m=>m.match_number||0))+1;
     const first=[];
     for(const [p1,p2] of firstPairs){
