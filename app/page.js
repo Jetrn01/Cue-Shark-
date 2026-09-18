@@ -241,7 +241,7 @@ export default function Home() {
   },[session,selected]);
 
   useEffect(()=>{
-    if(!session || !selected || (selected.format||'').toLowerCase()!=='groups → knockout' || autoPopulateInFlight.current) return;
+    if(!session || !selected || autoPopulateInFlight.current) return;
     const groupMatches=matches.filter(m=>m.group_name && Number(m.round_number)===1);
     const knockoutMatches=matches.filter(m=>Number(m.round_number)>1 && !m.group_name);
     if(!groupMatches.length || !knockoutMatches.length || !groupMatches.every(m=>m.status==='completed')) return;
@@ -1330,9 +1330,9 @@ export default function Home() {
 
   <Panel title="Matches & Table Assignment">
     <div className="drawTools">
-      {matches.some(m=>m.group_name && Number(m.round_number)===1) && (selected.format||'').toLowerCase()==='groups → knockout' && <button onClick={testCompleteGroupStageWithConfirmations}>🧪 TEST: Complete Groups + Both Confirm</button>}
+      {matches.some(m=>m.group_name && Number(m.round_number)===1) && matches.some(m=>Number(m.round_number)>1 && !m.group_name) && <button onClick={testCompleteGroupStageWithConfirmations}>🧪 TEST: Complete Groups + Both Confirm</button>}
       <button className="primary" onClick={()=>{if((selected.format||'').toLowerCase()==='groups → knockout')setDrawSettings(s=>({...s,type:'Groups → Knockout'}));else if((selected.format||'').toLowerCase()==='groups → reverse crossover')setDrawSettings(s=>({...s,type:'Groups → Reverse Crossover'}));setModal({type:'draw'})}}>🎱 {matches.length?'Edit / Regenerate Draw':'Create Draw'}</button>
-      {matches.some(m=>m.group_name)&&<>{(selected.format||'').toLowerCase()==='groups → knockout'?<button onClick={()=>generateGroupKnockout(drawSettings)} disabled={matches.some(m=>Number(m.round_number)>1 && !m.group_name && m.status!=='waiting')}>🏆 {matches.some(m=>Number(m.round_number)>1 && !m.group_name && m.status==='waiting')?'Populate':'Generate'} {Math.max(2, Number(drawSettings.group_count||4))*Math.max(1,Number(drawSettings.qualifiers_per_group||4))===16?'Round of 16':'Knockout'} from qualifiers</button>:<button onClick={generateReverseCrossover} disabled={matches.some(m=>Number(m.round_number)>1 && !m.group_name)}>🏆 Generate Reverse Crossover</button>}</>}
+      {matches.some(m=>m.group_name)&&<>{matches.some(m=>Number(m.round_number)>1 && !m.group_name)?<button onClick={()=>generateGroupKnockout(drawSettings)} disabled={matches.some(m=>Number(m.round_number)>1 && !m.group_name && m.status!=='waiting')}>🏆 {matches.some(m=>Number(m.round_number)>1 && !m.group_name && m.status==='waiting')?'Populate':'Generate'} {Math.max(2, Number(drawSettings.group_count||4))*Math.max(1,Number(drawSettings.qualifiers_per_group||4))===16?'Round of 16':'Knockout'} from qualifiers</button>:<button onClick={generateReverseCrossover} disabled={matches.some(m=>Number(m.round_number)>1 && !m.group_name)}>🏆 Generate Reverse Crossover</button>}</>}
       {matches.length===0&&<p className="muted">No matches created yet.</p>}
     </div>
     {matches.map(m=><div className={`row ${m.status==='bye'?'byeRow':''}`} key={m.id}>
