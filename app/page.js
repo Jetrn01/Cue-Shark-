@@ -1380,6 +1380,7 @@ function DrawModal({selected,players,matches=[],settings,setSettings,close,gener
         <option value="seeded">Seeded qualification order</option>
         <option value="random">Randomise qualifiers</option>
       </select></label>
+    </>}
     {isGroupsKO ? <>
   <label>Group stage race length<select disabled={drawLocked} value={settings.group_race_to||1} onChange={e=>setSettings({...settings,group_race_to:Number(e.target.value)})}>
     {[1,2,3,5,7,9].map(n=><option key={n} value={n}>Race to {n}</option>)}
