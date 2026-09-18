@@ -115,6 +115,42 @@ function qualificationPlan(groupCount, qualifiersPerGroup){
   return {automatic,target,wildcards:Math.max(0,target-automatic)};
 }
 
+function buildEmptyKnockoutRows(competitionId,startMatchNo,targetSize,race){
+  const size=Number(targetSize)||0;
+  if(size<2 || (size & (size-1))!==0) return [];
+  const rounds=[];
+  let matchNo=Number(startMatchNo)||1;
+  for(let count=size/2,roundNumber=2;count>=1;count=Math.floor(count/2),roundNumber++){
+    const round=[];
+    for(let i=0;i<count;i++) round.push({
+      id:crypto.randomUUID(),
+      competition_id:competitionId,
+      match_number:matchNo++,
+      round_number:roundNumber,
+      group_name:null,
+      player1_id:null,
+      player2_id:null,
+      race_to:Number(race)||1,
+      status:'waiting',
+      score1:0,
+      score2:0,
+      table_id:null,
+      next_match_id:null,
+      next_slot:null,
+      winner_id:null,
+      loser_id:null
+    });
+    rounds.push(round);
+  }
+  for(let r=0;r<rounds.length-1;r++){
+    for(let i=0;i<rounds[r].length;i++){
+      rounds[r][i].next_match_id=rounds[r+1][Math.floor(i/2)].id;
+      rounds[r][i].next_slot=(i%2)+1;
+    }
+  }
+  return rounds.flat();
+}
+
 function groupKnockoutPairs(ranked, groupNames, mode='group_crossover'){
   const qualifiers=[];
   if(mode==='random'){
@@ -185,7 +221,7 @@ export default function Home() {
   const [templateTables,setTemplateTables]=useState([]);
   const [players,setPlayers]=useState([]),[tables,setTables]=useState([]),[matches,setMatches]=useState([]);
   const [modal,setModal]=useState(null),[msg,setMsg]=useState('');
-  const [drawSettings,setDrawSettings]=useState({type:'Knockout',race_to:3,group_count:4,qualifiers_per_group:4,group_knockout_mode:'group_crossover'});
+  const [drawSettings,setDrawSettings]=useState({type:'Knockout',race_to:3,group_race_to:1,knockout_race_to:2,group_count:4,qualifiers_per_group:4,group_knockout_mode:'group_crossover'});
   const [qrData,setQrData]=useState(null);
   const [playerDB,setPlayerDB]=useState([]),[clubs,setClubs]=useState([]);
   const [profileData,setProfileData]=useState({player:null,matches:[],competitions:[],templates:[],loading:false});
@@ -685,29 +721,80 @@ export default function Home() {
       const {error}=await supabase.from('competition_matches').delete().eq('competition_id',selected.id);
       if(error){setMsg(error.message);return;}
     }
-    const race=Number(settings.group_race_to||settings.race_to||selected.default_race_to||3);
+    const groupRace=Number(settings.group_race_to||settings.race_to||selected.default_race_to||3);
     const groups=Array.from({length:groupCount},()=>[]);
     checkedPlayers.forEach((id,i)=>groups[i%groupCount].push(id));
     const rows=[]; let n=1;
     groups.forEach((group,gi)=>{
-      for(let i=0;i<group.length;i++) for(let j=i+1;j<group.length;j++) rows.push({competition_id:selected.id,match_number:n++,round_number:1,group_name:String.fromCharCode(65+gi),player1_id:group[i],player2_id:group[j],race_to:race,status:'scheduled',score1:0,score2:0,table_id:null});
+      for(let i=0;i<group.length;i++) for(let j=i+1;j<group.length;j++) rows.push({
+        competition_id:selected.id,match_number:n++,round_number:1,group_name:String.fromCharCode(65+gi),
+        player1_id:group[i],player2_id:group[j],race_to:groupRace,status:'scheduled',score1:0,score2:0,table_id:null
+      });
     });
     if(!rows.length){setMsg('Could not create group matches.');return;}
     const {error}=await supabase.from('competition_matches').insert(rows);
     if(error){setMsg(`Could not create group draw: ${error.message}`);return;}
-    await load(selected);setModal(null);setMsg(`${checkedPlayers.length} players placed into ${groupCount} balanced groups. Complete the group stage, then generate the ${settings.type==='Groups → Knockout'?'knockout from qualifiers':'Reverse Crossover'}.`);
-  }
 
+    if(settings.type==='Groups → Knockout'){
+      const maxPlayersPerGroup=Math.max(...groups.map(g=>g.length));
+      const qualifiersPerGroup=Math.max(1,Math.min(Number(settings.qualifiers_per_group||1),maxPlayersPerGroup));
+      const plan=qualificationPlan(groupCount,qualifiersPerGroup);
+      const knockoutRace=Number(settings.knockout_race_to||settings.race_to||selected.default_race_to||3);
+      if(plan.target>=2){
+        const bracket=buildEmptyKnockoutRows(selected.id,rows.length+1,plan.target,knockoutRace);
+        if(bracket.length){
+          const {error:bracketError}=await supabase.from('competition_matches').insert(bracket);
+          if(bracketError){
+            await load(selected);
+            setModal(null);
+            setMsg(`Group draw created, but the knockout bracket could not be created: ${bracketError.message}`);
+            return;
+          }
+        }
+        await load(selected);
+        setModal(null);
+        setMsg(`${checkedPlayers.length} players placed into ${groupCount} balanced groups. The ${plan.target}-player knockout bracket is ready and will be populated from qualifiers when the group stage is complete.`);
+        return;
+      }
+    }
+
+    await load(selected);
+    setModal(null);
+    setMsg(`${checkedPlayers.length} players placed into ${groupCount} balanced groups. Complete the group stage, then generate the Reverse Crossover.`);
+  }
 
   async function generateGroupKnockout(settings=drawSettings){
     if(!selected)return;
     const groupMatches=matches.filter(m=>m.group_name && Number(m.round_number)===1);
     if(!groupMatches.length){setMsg('Create the group stage first.');return;}
-    if(groupMatches.some(m=>m.status!=='completed')){setMsg('Complete all group-stage matches before generating the knockout.');return;}
-    if(matches.some(m=>Number(m.round_number)>1 && !m.group_name)){setMsg('The knockout stage has already been generated.');return;}
 
     const groupNames=[...new Set(groupMatches.map(m=>m.group_name))].sort();
-    const qualifiersPerGroup=Math.max(1,Math.min(Number(settings.qualifiers_per_group||1), Math.min(...groupNames.map(g=>groupMatches.filter(m=>m.group_name===g).reduce((ids,m)=>{ids.add(m.player1_id);ids.add(m.player2_id);return ids;},new Set()).size))));
+    const groupComplete=groupMatches.every(m=>m.status==='completed');
+    const existingKnockout=matches.filter(m=>Number(m.round_number)>1 && !m.group_name).sort((a,b)=>(a.match_number||0)-(b.match_number||0));
+
+    if(!groupComplete && existingKnockout.length){
+      setMsg('The knockout bracket is already created. Complete all group-stage matches and then populate it from the qualifiers.');
+      return;
+    }
+
+    const playerCounts=groupNames.map(g=>groupMatches.filter(m=>m.group_name===g).reduce((ids,m)=>{ids.add(m.player1_id);ids.add(m.player2_id);return ids;},new Set()).size);
+    const qualifiersPerGroup=Math.max(1,Math.min(Number(settings.qualifiers_per_group||1),Math.min(...playerCounts)));
+    const plan=qualificationPlan(groupNames.length,qualifiersPerGroup);
+    const targetSize=plan.target;
+    const race=Number(settings.knockout_race_to||settings.race_to||selected.default_race_to||3);
+
+    if(!groupComplete){
+      if(targetSize<2){setMsg('Not enough players to create a knockout bracket.');return;}
+      const startMatchNo=Math.max(...matches.map(m=>Number(m.match_number)||0),0)+1;
+      const bracket=buildEmptyKnockoutRows(selected.id,startMatchNo,targetSize,race);
+      if(!bracket.length){setMsg(`Could not create the ${targetSize}-player knockout bracket.`);return;}
+      const {error}=await supabase.from('competition_matches').insert(bracket);
+      if(error){setMsg(`Could not create knockout bracket: ${error.message}`);return;}
+      await load(selected);
+      setMsg(`The ${targetSize}-player knockout bracket has been created. It will be populated after the group stage is complete.`);
+      return;
+    }
+
     const ranked={};
     for(const g of groupNames){
       const rows=groupMatches.filter(m=>m.group_name===g);
@@ -718,12 +805,6 @@ export default function Home() {
     const qualified=[];
     groupNames.forEach(g=>ranked[g].slice(0,qualifiersPerGroup).forEach((p,pos)=>qualified.push({...p,group:g,position:pos+1,qualificationType:'automatic'})));
 
-    // If the selected qualifiers do not make a power-of-two field, fill the
-    // next knockout spot with the best player just outside the automatic
-    // qualifying positions. The wildcard is decided by wins first, then the
-    // highest cumulative signed ball differential.
-    const plan=qualificationPlan(groupNames.length, qualifiersPerGroup);
-    const targetSize=plan.target;
     const wildcardCount=plan.wildcards;
     if(wildcardCount>0){
       const candidates=[];
@@ -734,36 +815,21 @@ export default function Home() {
       for(const candidate of candidates.slice(0,wildcardCount)){
         if(!qualified.some(q=>q.id===candidate.id)) qualified.push(candidate);
       }
-      if(qualified.length < targetSize){
-        setMsg(`There are not enough eligible non-qualifiers to fill the ${targetSize}-player knockout. Reduce the number of groups or qualifiers per group.`);
-        return;
-      }
+      if(qualified.length<targetSize){setMsg(`There are not enough eligible non-qualifiers to fill the ${targetSize}-player knockout. Reduce the number of groups or qualifiers per group.`);return;}
     }
     if(qualified.length<2){setMsg('Not enough qualified players to create a knockout.');return;}
 
     let firstPairs=[];
     const mode=settings.group_knockout_mode||'group_crossover';
     if((mode==='group_crossover' || mode==='five_group_reverse') && groupNames.length===5 && qualifiersPerGroup===3 && qualified.length===16){
-      // Five groups / top 3 / one wildcard = 16-player Round of 16.
-      // Use a five-group reverse crossover: each group winner plays the
-      // third-place player from the next group, keeping all group winners
-      // apart and preventing same-group Round-of-16 matches.
-      // The five second-place players plus the wildcard fill the remaining
-      // three matches. The wildcard plays the second-place player from the
-      // next group, while the remaining four second-place players cross in
-      // reverse order. Once generated, these Round-of-16 positions are fixed.
       const q1=groupNames.map(g=>ranked[g][0]);
       const q2=groupNames.map(g=>ranked[g][1]);
       const q3=groupNames.map(g=>ranked[g][2]);
-      for(let i=0;i<5;i++){
-        firstPairs.push([q1[i]?.id||null,q3[(i+1)%5]?.id||null]);
-      }
-
+      for(let i=0;i<5;i++) firstPairs.push([q1[i]?.id||null,q3[(i+1)%5]?.id||null]);
       const wildcard=qualified.find(p=>p.qualificationType==='wildcard');
       const wi=Math.max(0,groupNames.indexOf(wildcard?.group));
       const wildcardOpponent=(wi+1)%5;
       firstPairs.push([q2[wildcardOpponent]?.id||null,wildcard?.id||null]);
-
       const remaining=[];
       for(let offset=2;offset<=5;offset++) remaining.push(q2[(wi+offset)%5]);
       firstPairs.push([remaining[0]?.id||null,remaining[2]?.id||null]);
@@ -772,61 +838,54 @@ export default function Home() {
       for(let i=0;i<groupNames.length;i+=2){
         const left=groupNames[i], right=groupNames[i+1];
         const leftQ=ranked[left].slice(0,qualifiersPerGroup), rightQ=ranked[right].slice(0,qualifiersPerGroup);
-        for(let pos=0;pos<qualifiersPerGroup;pos++){
-          firstPairs.push([leftQ[pos]?.id||null,rightQ[qualifiersPerGroup-1-pos]?.id||null]);
-        }
+        for(let pos=0;pos<qualifiersPerGroup;pos++) firstPairs.push([leftQ[pos]?.id||null,rightQ[qualifiersPerGroup-1-pos]?.id||null]);
       }
     } else if(mode==='random'){
       const shuffled=[...qualified].sort(()=>Math.random()-0.5).map(p=>p.id);
       for(let i=0;i<shuffled.length;i+=2) firstPairs.push([shuffled[i]||null,shuffled[i+1]||null]);
     } else {
-      // Seeded by group finish: preserve the qualification order and pair sequentially.
       for(let i=0;i<qualified.length;i+=2) firstPairs.push([qualified[i]?.id||null,qualified[i+1]?.id||null]);
     }
 
-    const race=Number(settings.knockout_race_to||settings.race_to||selected.default_race_to||3);
-    let matchNo=Math.max(...matches.map(m=>m.match_number||0))+1;
-    const first=[];
-    for(const [p1,p2] of firstPairs){
-      first.push({id:crypto.randomUUID(),competition_id:selected.id,match_number:matchNo++,round_number:2,group_name:null,player1_id:p1,player2_id:p2,race_to:race,status:(p1&&p2)?'scheduled':'bye',score1:0,score2:0,table_id:null,next_match_id:null,next_slot:null,winner_id:(p1&&!p2)?p1:(!p1&&p2)?p2:null,loser_id:null});
+    if(firstPairs.length*2!==targetSize){
+      setMsg(`The selected qualification settings require a ${targetSize}-player bracket, but the generated qualifier pairings contain ${firstPairs.length*2} places.`);
+      return;
     }
-    const size=2**Math.ceil(Math.log2(first.length));
-    while(first.length<size) first.push({id:crypto.randomUUID(),competition_id:selected.id,match_number:matchNo++,round_number:2,group_name:null,player1_id:null,player2_id:null,race_to:race,status:'waiting',score1:0,score2:0,table_id:null,next_match_id:null,next_slot:null,winner_id:null,loser_id:null});
 
-    const rounds=[first]; let prev=first, roundNo=3;
-    while(prev.length>1){
-      const cur=[];
-      for(let i=0;i<prev.length/2;i++) cur.push({id:crypto.randomUUID(),competition_id:selected.id,match_number:matchNo++,round_number:roundNo,group_name:null,player1_id:null,player2_id:null,race_to:race,status:'waiting',score1:0,score2:0,table_id:null,next_match_id:null,next_slot:null,winner_id:null,loser_id:null});
-      rounds.push(cur);prev=cur;roundNo++;
-    }
-    for(let r=0;r<rounds.length-1;r++) for(let i=0;i<rounds[r].length;i++){
-      rounds[r][i].next_match_id=rounds[r+1][Math.floor(i/2)].id;
-      rounds[r][i].next_slot=(i%2)+1;
-    }
-    const possible=new Map(rounds[0].map(m=>[m.id,!!(m.player1_id||m.player2_id)]));
-    const all=rounds.flat();
-    for(let r=0;r<rounds.length-1;r++){
-      for(const feeder of rounds[r]) if(feeder.status==='bye'&&feeder.winner_id){
-        const target=all.find(x=>x.id===feeder.next_match_id);
-        if(target){if(feeder.next_slot===1)target.player1_id=feeder.winner_id;else target.player2_id=feeder.winner_id;}
+    if(existingKnockout.length){
+      const firstRound=existingKnockout.filter(m=>Number(m.round_number)===2).sort((a,b)=>(a.match_number||0)-(b.match_number||0));
+      const expectedMatches=targetSize-1;
+      if(existingKnockout.length!==expectedMatches || firstRound.length!==firstPairs.length){
+        setMsg(`The existing knockout bracket does not match the current ${targetSize}-player qualification settings. Create a new group draw to rebuild the bracket.`);
+        return;
       }
-      for(const target of rounds[r+1]){
-        const feeders=rounds[r].filter(f=>f.next_match_id===target.id);
-        possible.set(target.id,feeders.some(f=>possible.get(f.id)));
-        if(target.player1_id&&target.player2_id){target.status='scheduled';continue;}
-        const sole=target.player1_id||target.player2_id;
-        if(!sole)continue;
-        const missingSlot=target.player1_id?2:1;
-        const missing=feeders.find(f=>f.next_slot===missingSlot);
-        if(missing&&!possible.get(missing.id)){target.status='bye';target.winner_id=sole;}
+      for(let i=0;i<firstRound.length;i++){
+        const [p1,p2]=firstPairs[i];
+        const {error}=await supabase.from('competition_matches').update({
+          player1_id:p1,player2_id:p2,race_to:race,status:(p1&&p2)?'scheduled':'bye',
+          score1:0,score2:0,table_id:null,winner_id:(p1&&!p2)?p1:(!p1&&p2)?p2:null,loser_id:null
+        }).eq('id',firstRound[i].id);
+        if(error){setMsg(`Could not populate knockout Match ${firstRound[i].match_number}: ${error.message}`);return;}
       }
+      await load(selected);
+      const wildcardText=wildcardCount>0?` plus ${wildcardCount} wildcard qualifier${wildcardCount===1?'':'s'} (most wins, then highest cumulative ball differential).`:'';
+      setMsg(`Knockout populated from ${qualified.length} qualifiers: top ${qualifiersPerGroup} from each of ${groupNames.length} groups${wildcardText}`);
+      return;
     }
-    const final=rounds.at(-1)[0];
-    final.status=final.player1_id&&final.player2_id?'scheduled':final.status;
-    const {error}=await supabase.from('competition_matches').insert(all);
+
+    const startMatchNo=Math.max(...matches.map(m=>Number(m.match_number)||0),0)+1;
+    const bracket=buildEmptyKnockoutRows(selected.id,startMatchNo,targetSize,race);
+    if(!bracket.length){setMsg(`Could not create the ${targetSize}-player knockout bracket.`);return;}
+    const firstRound=bracket.filter(m=>Number(m.round_number)===2).sort((a,b)=>a.match_number-b.match_number);
+    firstRound.forEach((m,i)=>{
+      const [p1,p2]=firstPairs[i]||[null,null];
+      m.player1_id=p1;m.player2_id=p2;m.status=(p1&&p2)?'scheduled':'bye';m.winner_id=(p1&&!p2)?p1:(!p1&&p2)?p2:null;
+    });
+    const {error}=await supabase.from('competition_matches').insert(bracket);
     if(error){setMsg(`Could not create knockout: ${error.message}`);return;}
+    await load(selected);
     const wildcardText=wildcardCount>0?` plus ${wildcardCount} wildcard qualifier${wildcardCount===1?'':'s'} (most wins, then highest cumulative ball differential).`:'';
-    await load(selected);setMsg(`Knockout created from ${qualified.length} qualifiers: top ${qualifiersPerGroup} from each of ${groupNames.length} groups${wildcardText}`);
+    setMsg(`Knockout created from ${qualified.length} qualifiers: top ${qualifiersPerGroup} from each of ${groupNames.length} groups${wildcardText}`);
   }
 
   async function generateReverseCrossover(){
