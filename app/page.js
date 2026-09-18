@@ -777,32 +777,22 @@ export default function Home() {
 
   async function testCompleteGroupStageWithConfirmations(){
     if(!selected)return;
-    if((selected.format||'').toLowerCase()!=='groups → knockout'){setMsg('This test is only available for a Groups → Knockout competition.');return;}
     const groupMatches=matches.filter(m=>m.group_name && Number(m.round_number)===1);
-    if(!groupMatches.length){setMsg('Create a Groups → Knockout draw first.');return;}
-    if(groupMatches.some(m=>m.status==='completed')){setMsg('Some group matches are already completed. Use a fresh test competition for this test.');return;}
-    if(!window.confirm('TEST ONLY: Mark all group matches as completed with BOTH players confirmed. This creates simulated results so we can test automatic qualification into the knockout. Continue?'))return;
-    const updates=groupMatches.map((m,i)=>({
-      id:m.id,
-      score1:1,
-      score2:0,
-      winner_balls:Number(m.race_to)===1?0:null,
-      winner_id:m.player1_id,
-      loser_id:m.player2_id,
-      status:'completed',
-      p1_confirmed:true,
-      p2_confirmed:true,
-      dispute_reason:null
-    }));
-    for(const u of updates){
-      const {error}=await supabase.from('competition_matches').update({
-        score1:u.score1,score2:u.score2,winner_balls:u.winner_balls,winner_id:u.winner_id,loser_id:u.loser_id,
-        status:u.status,p1_confirmed:u.p1_confirmed,p2_confirmed:u.p2_confirmed,dispute_reason:u.dispute_reason
-      }).eq('id',u.id);
-      if(error){setMsg(`Test failed on Match ${groupMatches.find(m=>m.id===u.id)?.match_number||''}: ${error.message}`);await load(selected);return;}
+    const knockoutMatches=matches.filter(m=>Number(m.round_number)>1 && !m.group_name);
+    if(!groupMatches.length || !knockoutMatches.length){setMsg('Create a Groups → Knockout draw first.');return;}
+    const remaining=groupMatches.filter(m=>m.status!=='completed');
+    if(!remaining.length){setMsg('All group matches are already completed. The automatic knockout population should run.');return;}
+    if(!window.confirm(`TEST ONLY: Simulate the remaining ${remaining.length} group matches as completed with BOTH players confirmed. Any result you already entered will be preserved. Continue?`))return;
+    for(const m of remaining){
+      const u={
+        score1:1,score2:0,winner_balls:Number(m.race_to)===1?0:null,winner_id:m.player1_id,loser_id:m.player2_id,
+        status:'completed',p1_confirmed:true,p2_confirmed:true,dispute_reason:null
+      };
+      const {error}=await supabase.from('competition_matches').update(u).eq('id',m.id);
+      if(error){setMsg(`Test failed on Match ${m.match_number}: ${error.message}`);await load(selected);return;}
     }
     await load(selected);
-    setMsg('TEST COMPLETE: All group results were simulated as confirmed by both players. Automatic knockout population should now run.');
+    setMsg(`TEST COMPLETE: The ${remaining.length} remaining group results were simulated as confirmed by both players. Your existing completed result was preserved. Automatic knockout population should now run.`);
   }
 
   async function generateGroupKnockout(settings=drawSettings){
