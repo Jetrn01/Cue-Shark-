@@ -799,7 +799,7 @@ export default function Home() {
   }
 
   async function generateGroupKnockout(settings=drawSettings,sourceMatches=null){
-    const workingMatches=sourceMatches||workingMatches;
+    const workingMatches=sourceMatches||matches;
     if(!selected)return;
     const groupMatches=workingMatches.filter(m=>m.group_name && Number(m.round_number)===1);
     if(!groupMatches.length){setMsg('Create the group stage first.');return;}
@@ -809,7 +809,7 @@ export default function Home() {
     const existingKnockout=workingMatches.filter(m=>Number(m.round_number)>1 && !m.group_name).sort((a,b)=>(a.match_number||0)-(b.match_number||0));
 
     if(!groupComplete && existingKnockout.length){
-      setMsg('The knockout bracket is already created. Complete all group-stage workingMatches and then populate it from the qualifiers.');
+      setMsg('The knockout bracket is already created. Complete all group-stage matches and then populate it from the qualifiers.');
       return;
     }
 
