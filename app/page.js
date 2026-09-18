@@ -961,11 +961,11 @@ export default function Home() {
       const left=ranked[g1],right=ranked[g2],len=Math.max(left.length,right.length);
       for(let pos=0;pos<len;pos++){
         const p1=left[pos]?.id||null,p2=right[right.length-1-pos]?.id||null,bye=!!p1!==!!p2;
-        crossover.push({id:crypto.randomUUID(),competition_id:selected.id,match_number:matchNo++,round_number:2,group_name:null,player1_id:p1,player2_id:p2,race_to:Number(selected.default_race_to||3),status:bye?'bye':'scheduled',score1:0,score2:0,table_id:null,next_match_id:null,next_slot:null,winner_id:bye?(p1||p2):null,loser_id:null});
+        crossover.push({id:crypto.randomUUID(),competition_id:selected.id,match_number:matchNo++,round_number:2,group_name:null,player1_id:p1,player2_id:p2,race_to:Number(drawSettings.knockout_race_to||drawSettings.race_to||selected.default_race_to||3),status:bye?'bye':'scheduled',score1:0,score2:0,table_id:null,next_match_id:null,next_slot:null,winner_id:bye?(p1||p2):null,loser_id:null});
       }
     }
     const target=2**Math.ceil(Math.log2(crossover.length));
-    while(crossover.length<target)crossover.push({id:crypto.randomUUID(),competition_id:selected.id,match_number:matchNo++,round_number:2,group_name:null,player1_id:null,player2_id:null,race_to:Number(selected.default_race_to||3),status:'waiting',score1:0,score2:0,table_id:null,next_match_id:null,next_slot:null,winner_id:null,loser_id:null});
+    while(crossover.length<target)crossover.push({id:crypto.randomUUID(),competition_id:selected.id,match_number:matchNo++,round_number:2,group_name:null,player1_id:null,player2_id:null,race_to:Number(drawSettings.knockout_race_to||drawSettings.race_to||selected.default_race_to||3),status:'waiting',score1:0,score2:0,table_id:null,next_match_id:null,next_slot:null,winner_id:null,loser_id:null});
     const rounds=[crossover]; let prev=crossover,roundNo=3;
     while(prev.length>1){const cur=[];for(let i=0;i<prev.length/2;i++)cur.push({id:crypto.randomUUID(),competition_id:selected.id,match_number:matchNo++,round_number:roundNo,group_name:null,player1_id:null,player2_id:null,race_to:Number(selected.default_race_to||3),status:'waiting',score1:0,score2:0,table_id:null,next_match_id:null,next_slot:null,winner_id:null,loser_id:null});rounds.push(cur);prev=cur;roundNo++;}
     const all=rounds.flat();
@@ -1420,7 +1420,7 @@ function DrawModal({selected,players,matches=[],settings,setSettings,close,gener
         <option value="random">Randomise qualifiers</option>
       </select></label>
     </>}
-    {isGroupsKO ? <>
+    {isGroups ? <>
   <label>Group stage race length<select disabled={drawLocked} value={settings.group_race_to||1} onChange={e=>setSettings({...settings,group_race_to:Number(e.target.value)})}>
     {[1,2,3,5,7,9].map(n=><option key={n} value={n}>Race to {n}</option>)}
   </select></label>
