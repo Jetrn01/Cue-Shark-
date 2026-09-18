@@ -1460,7 +1460,7 @@ export default function Home() {
   </Panel>}
   {matches.length>0 && ['knockout','groups → knockout','reverse cross','seeded 16'].includes((selected.format||'').toLowerCase()) && <Panel title="Knockout Bracket">
     <p className="muted">Winners advance automatically when their match is completed.</p>
-    <KnockoutBracket matches={matches} playerName={playerName}/>
+    <KnockoutBracket matches={['groups → knockout','reverse cross','seeded 16'].includes((selected.format||'').toLowerCase()) ? matches.filter(m=>!m.group_name) : matches} playerName={playerName}/>
   </Panel>}
   </section>}</div>
   {qrData&&<QRModal data={qrData} close={()=>setQrData(null)}/>}
