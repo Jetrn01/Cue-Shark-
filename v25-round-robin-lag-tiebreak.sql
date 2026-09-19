@@ -25,15 +25,15 @@ for all
 to authenticated
 using (
   exists (
-    select 1 from public.competitions c
-    where c.id = competition_id
-      and c.organiser_id = auth.uid()
+    select 1
+    from public.organisers o
+    where o.id = auth.uid()
   )
 )
 with check (
   exists (
-    select 1 from public.competitions c
-    where c.id = competition_id
-      and c.organiser_id = auth.uid()
+    select 1
+    from public.organisers o
+    where o.id = auth.uid()
   )
 );
