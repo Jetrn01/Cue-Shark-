@@ -879,6 +879,36 @@ export default function Home() {
     await generateGroupKnockout(drawSettings,null,playerId);
   }
 
+  async function testCompleteRoundRobinWithTie(){
+    if(!selected)return;
+    if((selected.format||'').toLowerCase()!=='round robin'){
+      setMsg('This test is only available for Round Robin competitions.');
+      return;
+    }
+    const rrMatches=matches.filter(m=>!m.group_name && Number(m.round_number)>=1);
+    const playerIds=[...new Set(rrMatches.flatMap(m=>[m.player1_id,m.player2_id]).filter(Boolean))];
+    if(playerIds.length!==7 || rrMatches.length!==21){
+      setMsg('This controlled tie test requires a 7-player Round Robin with 21 matches.');
+      return;
+    }
+    if(!window.confirm('This will overwrite the Round Robin results with controlled test results. It creates two players tied on wins, ball differential, frame differential and frames for. Continue?'))return;
+    const outcomes=[[0,1],[0,2],[0,3],[0,4],[5,0],[6,0],[1,2],[1,3],[1,4],[1,5],[6,1],[2,3],[4,2],[2,5],[2,6],[3,4],[3,5],[3,6],[4,5],[4,6],[5,6]];
+    const winnerForPair=new Map(outcomes.map(([w,l])=>[Math.min(w,l)+'-'+Math.max(w,l),w]));
+    for(const m of rrMatches){
+      const a=playerIds.indexOf(m.player1_id), b=playerIds.indexOf(m.player2_id);
+      const winnerIndex=winnerForPair.get(Math.min(a,b)+'-'+Math.max(a,b));
+      const p1Wins=winnerIndex===a;
+      const {error}=await supabase.from('competition_matches').update({
+        score1:p1Wins?1:0,score2:p1Wins?0:1,race_to:1,winner_id:p1Wins?m.player1_id:m.player2_id,
+        loser_id:p1Wins?m.player2_id:m.player1_id,winner_balls:1,status:'completed',
+        p1_confirmed:true,p2_confirmed:true,table_id:null,dispute_reason:null
+      }).eq('id',m.id);
+      if(error){setMsg('Could not create Round Robin tie test: '+error.message);return;}
+    }
+    await load(selected);
+    setMsg('TEST COMPLETE: '+playerName(playerIds[0])+' and '+playerName(playerIds[1])+' finish tied at 4 wins, +2 ball differential, +2 frame differential and 4 frames for. Their final order is resolved by the existing deterministic tie-break.');
+  }
+
   async function generateGroupKnockout(settings=drawSettings,sourceMatches=null,wildcardWinnerId=null){
     const workingMatches=sourceMatches||matches;
     if(!selected)return;
@@ -1545,7 +1575,7 @@ export default function Home() {
 
   <Panel title="Matches & Table Assignment">
     <div className="drawTools">
-      {matches.some(m=>m.group_name && Number(m.round_number)===1) && matches.some(m=>Number(m.round_number)>1 && !m.group_name) && <button onClick={testCompleteGroupStageWithConfirmations}>🧪 TEST: Complete Groups + Both Confirm</button>}
+      {matches.some(m=>m.group_name && Number(m.round_number)===1) && matches.some(m=>Number(m.round_number)>1 && !m.group_name) && <button onClick={testCompleteGroupStageWithConfirmations}>🧪 TEST: Complete Groups + Both Confirm</button><button onClick={testCompleteRoundRobinWithTie}>🧪 TEST: Complete Round Robin + Tie</button>}
       <button className="primary" onClick={()=>{if((selected.format||'').toLowerCase()==='groups → knockout')setDrawSettings(s=>({...s,type:'Groups → Knockout'}));else if((selected.format||'').toLowerCase()==='reverse cross')setDrawSettings(s=>({...s,type:'Reverse Cross'}));else if((selected.format||'').toLowerCase()==='seeded 16')setDrawSettings(s=>({...s,type:'Seeded 16',group_count:4,qualifiers_per_group:4,group_knockout_mode:'top16_overall'}));setModal({type:'draw'})}}>🎱 {matches.length?'Edit / Regenerate Draw':'Create Draw'}</button>
       {matches.some(m=>m.group_name)&&<>{matches.some(m=>Number(m.round_number)>1 && !m.group_name)?<button onClick={()=>generateGroupKnockout(drawSettings)} disabled={matches.some(m=>Number(m.round_number)>1 && !m.group_name && m.status!=='waiting')}>🏆 {matches.some(m=>Number(m.round_number)>1 && !m.group_name && m.status==='waiting')?'Populate':'Generate'} {Math.max(2, Number(drawSettings.group_count||4))*Math.max(1,Number(drawSettings.qualifiers_per_group||4))===16?'Round of 16':'Knockout'} from qualifiers</button>:<button onClick={generateReverseCrossover} disabled={matches.some(m=>Number(m.round_number)>1 && !m.group_name)}>🏆 Generate Reverse Cross</button>}</>}
       {matches.length===0&&<p className="muted">No matches created yet.</p>}
