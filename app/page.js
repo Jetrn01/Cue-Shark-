@@ -949,7 +949,11 @@ export default function Home() {
 
         const wildcardCandidates=[];
         groupNames.forEach(g=>{
-          ranked[g].slice(qualifiersPerGroup).forEach(p=>wildcardCandidates.push({...p,group:g}));
+          ranked[g].slice(qualifiersPerGroup).forEach(p=>{
+            const row=players.find(x=>x.player_id===p.id)?.players;
+            const name=row?.display_name || `${row?.first_name||''} ${row?.last_name||''}`.trim() || 'Player';
+            wildcardCandidates.push({...p,group:g,name});
+          });
         });
         wildcardCandidates.sort((a,b)=>b.wins-a.wins || b.ballDiff-a.ballDiff || (b.for-b.against)-(a.for-a.against) || b.for-a.for || a.id.localeCompare(b.id));
         const cutoff=wildcardCandidates[0];
