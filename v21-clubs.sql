@@ -90,6 +90,11 @@ declare
 begin
   if v_uid is null then raise exception 'You must be logged in.'; end if;
 
+  -- Prevent two simultaneous auth callbacks from trying to claim the same player.
+  -- This can happen because the initial session check and auth state listener can
+  -- both fire during login, especially in React development mode.
+  perform pg_advisory_xact_lock(hashtextextended(v_uid::text, 0));
+
   select * into v_player from public.players where user_id=v_uid limit 1;
   if found then
     if v_club_id is not null then
