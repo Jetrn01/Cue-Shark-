@@ -56,7 +56,8 @@ export default function PlayerLogin(){
   try{
    if(mode==='signup'){
     if(!first.trim()||!last.trim()){setMsg('Please enter your first and last name.');return}
-    const {data,error}=await supabase.auth.signUp({email:email.trim(),password,options:{data:{first_name:first.trim(),last_name:last.trim(),club_id:clubId||null}}});
+    const redirectTo=`${window.location.origin}/player/login`;
+    const {data,error}=await supabase.auth.signUp({email:email.trim(),password,options:{data:{first_name:first.trim(),last_name:last.trim(),club_id:clubId||null},emailRedirectTo:redirectTo}});
     if(error){setMsg(error.message);return}
     if(data.session){
       const r=await supabase.rpc('claim_player_account',{p_first_name:first.trim(),p_last_name:last.trim(),p_club_id:clubId||null});
