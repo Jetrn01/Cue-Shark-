@@ -686,11 +686,40 @@ export default function Home() {
 
     if(settings.type==='Round Robin'){
       const rows=[]; let n=1;
-      for(let i=0;i<ordered.length;i++) for(let j=i+1;j<ordered.length;j++)
-        rows.push({competition_id:selected.id,match_number:n++,round_number:1,player1_id:ordered[i],player2_id:ordered[j],race_to:race,status:'scheduled',score1:0,score2:0,table_id:null});
+      const slots=[...ordered];
+      if(slots.length%2===1) slots.push(null);
+      const roundCount=slots.length-1;
+      const half=slots.length/2;
+
+      for(let round=1;round<=roundCount;round++){
+        for(let i=0;i<half;i++){
+          const player1=slots[i];
+          const player2=slots[slots.length-1-i];
+          if(player1 && player2){
+            rows.push({
+              competition_id:selected.id,
+              match_number:n++,
+              round_number:round,
+              player1_id:player1,
+              player2_id:player2,
+              race_to:race,
+              status:'scheduled',
+              score1:0,
+              score2:0,
+              table_id:null
+            });
+          }
+        }
+
+        // Keep the first player fixed and rotate everyone else so each
+        // player meets every other player exactly once.
+        const rotated=[slots[0],slots[slots.length-1],...slots.slice(1,-1)];
+        slots.splice(0,slots.length,...rotated);
+      }
+
       const {error}=await supabase.from('competition_matches').insert(rows);
       if(error){setMsg(`Could not create draw: ${error.message}`);return;}
-      await load(selected);setModal(null);setMsg(`Round Robin created for ${ordered.length} players.`);return;
+      await load(selected);setModal(null);setMsg(`Round Robin created for ${ordered.length} players across ${roundCount} rounds.`);return;
     }
 
     const size=2**Math.ceil(Math.log2(ordered.length));
