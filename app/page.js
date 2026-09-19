@@ -952,8 +952,25 @@ export default function Home() {
           ranked[g].slice(qualifiersPerGroup).forEach(p=>wildcardCandidates.push({...p,group:g}));
         });
         wildcardCandidates.sort((a,b)=>b.wins-a.wins || b.ballDiff-a.ballDiff || (b.for-b.against)-(a.for-a.against) || b.for-a.for || a.id.localeCompare(b.id));
-        const wildcard=wildcardCandidates[0];
-        const wi=groupNames.indexOf(wildcard?.group);
+        const cutoff=wildcardCandidates[0];
+        if(!wildcardWinnerId && cutoff){
+          const sameScore=wildcardCandidates.filter(c=>
+            c.wins===cutoff.wins &&
+            c.ballDiff===cutoff.ballDiff &&
+            (c.for-c.against)===(cutoff.for-cutoff.against) &&
+            c.for===cutoff.for
+          );
+          if(sameScore.length>1){
+            setWildcardLag({candidates:sameScore});
+            setMsg('Wildcard tie detected. Run a lag between the tied players, then record the winner.');
+            return;
+          }
+        }
+        const wildcard=wildcardWinnerId
+          ? wildcardCandidates.find(c=>c.id===wildcardWinnerId)
+          : cutoff;
+        if(!wildcard){setMsg('A wildcard qualifier must be selected after the lag.');return;}
+        const wi=groupNames.indexOf(wildcard.group);
         const wildcardOpponentGroup=(wi+1)%5;
         firstPairs.push([q2[wildcardOpponentGroup]?.id||null,wildcard?.id||null]);
 
