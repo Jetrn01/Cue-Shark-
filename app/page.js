@@ -901,19 +901,22 @@ export default function Home() {
   }
 
   useEffect(()=>{
-    if(!selected || selected.format!=='Round Robin' || !matches.length || roundRobinLag) return;
+    const format=String(selected?.format||'').trim().toLowerCase();
+    if(!selected || format!=='round robin' || !matches.length || roundRobinLag) return;
     const completed=matches.filter(m=>m.status==='completed' && m.winner_id);
     if(completed.length!==matches.length)return;
     const ranked=rankGroupPlayers(matches);
+    const groups=[];
     for(const p of ranked){
       const tied=ranked.filter(x=>x.wins===p.wins && x.ballDiff===p.ballDiff && (x.for-x.against)===(p.for-p.against) && x.for===p.for);
       if(tied.length>1){
         const key=tied.map(x=>x.id).sort().join(':');
-        if(!roundRobinTiebreaks.some(t=>t.tie_key===key)){ setRoundRobinLag({key,candidates:tied}); }
-        break;
+        if(!groups.some(g=>g.key===key)) groups.push({key,candidates:tied});
       }
     }
-  },[selected,matches,roundRobinTiebreaks,roundRobinLag]);
+    const unresolved=groups.find(g=>!roundRobinTiebreaks.some(t=>t.tie_key===g.key));
+    if(unresolved) setRoundRobinLag(unresolved);
+  },[selected?.id,selected?.format,matches,roundRobinTiebreaks,roundRobinLag]);
 
   async function testCompleteRoundRobinWithTie(){
     if(!selected)return;
