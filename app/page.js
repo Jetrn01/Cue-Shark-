@@ -1607,7 +1607,7 @@ export default function Home() {
   </Panel>
 
   {matches.some(m=>m.group_name)&&<GroupStandingsPanel matches={matches} playerName={playerName} qualifiers={Math.max(1,Number(drawSettings.qualifiers_per_group||4))}/>}
-  {selected.format==='Round Robin'&&matches.length>0&&<RoundRobinStandingsPanel matches={matches} playerName={playerName} lagWinnerIds={roundRobinTiebreaks.map(x=>x.winner_id)}/>
+  {selected.format==='Round Robin'&&matches.length>0&&<RoundRobinStandingsPanel matches={matches} playerName={playerName} lagWinnerIds={roundRobinTiebreaks.map(x=>x.winner_id)}/>}
 
   <Panel title="Matches & Table Assignment">
     <div className="drawTools">
