@@ -1493,6 +1493,7 @@ export default function Home() {
   </Panel>
 
   {matches.some(m=>m.group_name)&&<GroupStandingsPanel matches={matches} playerName={playerName} qualifiers={Math.max(1,Number(drawSettings.qualifiers_per_group||4))}/>}
+  {selected.format==='Round Robin'&&matches.length>0&&<RoundRobinStandingsPanel matches={matches} playerName={playerName}/>}
 
   <Panel title="Matches & Table Assignment">
     <div className="drawTools">
@@ -1539,6 +1540,29 @@ export default function Home() {
 }
 
 function Panel({title,add,addText,children}){return <div className="panel"><div className="ph"><h3>{title}</h3>{add&&<button className="primary" onClick={add}>{addText}</button>}</div>{children}</div>}
+function RoundRobinStandingsPanel({matches=[],playerName}){
+  const completed=(matches||[]).filter(m=>m.status==='completed' && m.winner_id);
+  const ranked=rankGroupPlayers(matches);
+  const played={};
+  for(const m of completed){
+    for(const id of [m.player1_id,m.player2_id]) if(id) played[id]=(played[id]||0)+1;
+  }
+  return <Panel title="Round Robin standings">
+    <div className="standingsTableWrap">
+      <table className="standingsTable">
+        <thead><tr><th>#</th><th>Player</th><th>Played</th><th>W</th><th>L</th><th>Ball diff.</th><th>Frame diff.</th></tr></thead>
+        <tbody>
+          {ranked.map((r,i)=><tr key={r.id}>
+            <td>{i+1}</td><td><strong>{playerName(r.id)}</strong></td><td>{played[r.id]||0}</td><td>{r.wins}</td><td>{r.losses}</td>
+            <td>{r.ballDiff>=0?'+':''}{r.ballDiff}</td><td>{r.for-r.against>=0?'+':''}{r.for-r.against}</td>
+          </tr>)}
+        </tbody>
+      </table>
+    </div>
+    <small className="muted">Ranking order: wins → cumulative signed ball differential → frame difference → frames for.</small>
+  </Panel>
+}
+
 function GroupStandingsPanel({matches=[],playerName,qualifiers=4}){
   const groups=[...new Set(matches.filter(m=>m.group_name&&Number(m.round_number)===1).map(m=>m.group_name))].sort();
   if(!groups.length)return null;
