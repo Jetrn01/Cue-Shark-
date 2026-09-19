@@ -1566,7 +1566,7 @@ export default function Home() {
     </div>
     <small className="muted">Only the player who wins the physical lag should be selected. This lag is a qualification tie-break and does not count as a tournament match.</small>
   </Modal>}
-  {modal?.type==='clubs'&&<ClubsModal clubs={clubs} close={()=>setModal(null)} save={saveClub}/>}}
+  {modal?.type==='clubs'&&<ClubsModal clubs={clubs} close={()=>setModal(null)} save={saveClub}/>} 
   {modal?.type==='playerdb'&&<PlayerDatabaseModal players={playerDB} currentPlayers={players} close={()=>setModal(null)} add={addExistingPlayerToCompetition} edit={(p)=>setModal({type:'masterPlayer',p})} deletePlayer={deleteMasterPlayer} newPlayer={()=>setModal({type:'masterPlayer',p:null})} profile={openPlayerProfile}/>}
   {modal?.type==='playerProfile'&&<PlayerProfileModal data={profileData} close={()=>setModal(null)} playerName={playerName}/>}
   {modal?.type==='draw'&&<DrawModal selected={selected} players={players} matches={matches} settings={drawSettings} setSettings={setDrawSettings} close={()=>setModal(null)} generate={generateDraw} generateGroups={generateGroupsReverseCrossover}/>}
