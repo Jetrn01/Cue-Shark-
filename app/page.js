@@ -1532,12 +1532,12 @@ function GroupStandingsPanel({matches=[],playerName,qualifiers=4}){
 function DrawModal({selected,players,matches=[],settings,setSettings,close,generate,generateGroups}){
   const checked=players.filter(p=>p.checked_in).length;
   const drawLocked=matches.some(m=>['completed','in_progress','active'].includes(m.status));
-  const maxEvenGroups=Math.min(8,Math.floor(checked/2));
-  const groupOptions=[2,3,4,5,6,7,8].filter(n=>n<=Math.floor(checked/2));
   const isGroupsKO=settings.type==='Groups → Knockout';
   const isReverse=settings.type==='Reverse Cross';
   const isSeeded16=settings.type==='Seeded 16';
   const isGroups=isGroupsKO||isReverse||isSeeded16;
+  const availableGroupOptions=isReverse?[4,5]:[2,3,4,5,6,7,8];
+  const groupOptions=availableGroupOptions.filter(n=>n<=Math.floor(checked/2));
   const groupCount=isSeeded16?4:(groupOptions.includes(Number(settings.group_count))?Number(settings.group_count):(groupOptions[0]||2));
   const maxGroupSize=groupCount>0?Math.ceil(checked/groupCount):0;
   const qualifierOptions=Array.from({length:Math.max(1,maxGroupSize)},(_,i)=>i+1);
@@ -1551,16 +1551,14 @@ function DrawModal({selected,players,matches=[],settings,setSettings,close,gener
     {isGroups && <label>Number of groups<select disabled={drawLocked || isSeeded16} value={isSeeded16?4:groupCount} onChange={e=>setSettings({...settings,group_count:Number(e.target.value)})}>
       {isSeeded16?<option value="4">4 groups</option>:groupOptions.length?groupOptions.map(n=><option key={n} value={n}>{n} groups</option>):<option value="2">2 groups</option>}
     </select></label>}
-    {(isGroupsKO || isReverse) && <>
-      <label>Players advancing from each group<select disabled={drawLocked} value={qualifiers} onChange={e=>setSettings({...settings,qualifiers_per_group:Number(e.target.value)})}>
-        {qualifierOptions.map(n=><option key={n} value={n}>Top {n}</option>)}
-      </select></label>
-      <label>Knockout draw<select disabled={drawLocked} value={settings.group_knockout_mode||'group_crossover'} onChange={e=>setSettings({...settings,group_knockout_mode:e.target.value})}>
-        <option value="group_crossover">Group crossover — A1 vs B4, A2 vs B3</option>
-        <option value="seeded">Seeded qualification order</option>
-        <option value="random">Randomise qualifiers</option>
-      </select></label>
-    </>}
+    {(isGroupsKO || isReverse) && <label>Players advancing from each group<select disabled={drawLocked} value={qualifiers} onChange={e=>setSettings({...settings,qualifiers_per_group:Number(e.target.value)})}>
+      {qualifierOptions.map(n=><option key={n} value={n}>Top {n}</option>)}
+    </select></label>}
+    {isGroupsKO && <label>Knockout draw<select disabled={drawLocked} value={settings.group_knockout_mode||'group_crossover'} onChange={e=>setSettings({...settings,group_knockout_mode:e.target.value})}>
+      <option value="group_crossover">Group crossover — A1 vs B4, A2 vs B3</option>
+      <option value="seeded">Seeded qualification order</option>
+      <option value="random">Randomise qualifiers</option>
+    </select></label>}
     {isGroups ? <>
   <label>Group stage race length<select disabled={drawLocked} value={settings.group_race_to||1} onChange={e=>setSettings({...settings,group_race_to:Number(e.target.value)})}>
     {[1,2,3,5,7,9].map(n=><option key={n} value={n}>Race to {n}</option>)}
@@ -1578,11 +1576,11 @@ function DrawModal({selected,players,matches=[],settings,setSettings,close,gener
       {settings.type==='Round Robin'&&'Every checked-in player plays every other player once.'}
       {settings.type==='Random Draw'&&'Players are shuffled before the knockout draw.'}
       {isGroupsKO&&`Group stage first: ${groupCount} groups, then the top ${qualifiers} from each group advance. PottersMate automatically calculates the next power-of-two knockout field and any wildcard places needed. Wildcards are ranked by most wins, then highest cumulative ball differential.`}
-      {isReverse&&'Reverse Cross keeps group positions as the basis of the draw. The highest qualifier plays the lowest qualifier from another group, then 2nd vs 2nd-lowest, etc. With 5 groups and Top 3, the 15 automatic qualifiers are joined by the best 4th-place finisher; that wildcard is always drawn against a player from a different group.'}
+      {isReverse&&'Reverse Cross keeps group positions as the basis of the draw. Currently supported: 4 groups / Top 4, or 5 groups / Top 3. With 5 groups / Top 3, the 15 automatic qualifiers are joined by the best 4th-place finisher; that wildcard is always drawn against a player from a different group.'}
       {isSeeded16&&'Seeded 16 is for 16 or more players. All checked-in players enter the group stage across 4 groups; there is no maximum group-stage player count. After the group stage, the top 16 overall are selected using wins first, then ball differential, and seeded 1–16 for the knockout.'}
     </div>
     {isGroupsKO && checked>=2 && <div className="drawPreviewNote">{(() => { const plan=qualificationPlan(groupCount,qualifiers); const stage=plan.target===16?'Round of 16':plan.target===8?'Quarter-final / 8-player knockout':plan.target===4?'4-player knockout':plan.target===32?'Round of 32':`${plan.target}-player knockout`; return <><strong>{checked} players → {groupCount} groups → {plan.automatic} automatic qualifiers.</strong> Top {qualifiers} from every group advance. {plan.wildcards>0 ? <>{plan.wildcards} wildcard{plan.wildcards===1?'':'s'} will be selected from the non-qualifiers using <strong>most wins → highest cumulative ball differential</strong>. Then {plan.target} players enter the {stage}.</> : <>No wildcard is required. The {plan.target}-player field proceeds directly to the {stage}.</>}</>; })()}</div>}
-    {isReverse && checked>=2 && <div className="drawPreviewNote"><strong>{checked} players → {groupCount} groups → Top {qualifiers} from each group.</strong> All checked-in players play the group stage. {qualificationPlan(groupCount,qualifiers).wildcards>0 ? <>The extra knockout place{qualificationPlan(groupCount,qualifiers).wildcards===1?' is':'s are'} filled by the best non-qualifier{qualificationPlan(groupCount,qualifiers).wildcards===1?'':'s'}, while keeping Round 1 cross-group.</> : <>The qualifiers fill the knockout field directly.</>}</div>}
+    {isReverse && checked>=2 && <div className="drawPreviewNote"><strong>{checked} players → {groupCount} groups → Top {qualifiers} from each group.</strong> All checked-in players play the group stage. {qualificationPlan(groupCount,qualifiers).wildcards>0 ? <>The extra knockout place{qualificationPlan(groupCount,qualifiers).wildcards===1?' is':'s are'} filled by the best non-qualifier{qualificationPlan(groupCount,qualifiers).wildcards===1?'':'s'}, while keeping Round 1 cross-group.</> : <>The qualifiers fill the knockout field directly.</>} {!(groupCount===4&&qualifiers===4) && !(groupCount===5&&qualifiers===3) && <><br/><strong>Supported Reverse Cross setups: 4 groups / Top 4 or 5 groups / Top 3.</strong></>}</div>}
     {isSeeded16 && checked>=16 && <div className="drawPreviewNote"><strong>{checked} players → 4 groups → top 16 overall.</strong> All {checked} players take part in the group stage. The group size adjusts automatically; only the final top 16 progress to the knockout. Knockout: 1 vs 16, 2 vs 15, 3 vs 14, and so on.</div>}
     <div className="ma"><button type="button" onClick={close}>Close</button><button className="primary" disabled={drawLocked || checked<2 || (isGroups && (groupOptions.length===0 || !groupOptions.includes(groupCount)))} onClick={()=>isGroups?generateGroups({...settings,type:isGroupsKO?'Groups → Knockout':isSeeded16?'Seeded 16':'Reverse Cross',group_count:isSeeded16?4:groupCount,qualifiers_per_group:isSeeded16?4:qualifiers,group_knockout_mode:isSeeded16?'top16_overall':(settings.group_knockout_mode||'group_crossover')}):generate(settings)}>{matches.length?'Regenerate Draw':'Generate Draw'}</button></div>
   </Modal>
