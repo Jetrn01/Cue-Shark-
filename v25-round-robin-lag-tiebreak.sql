@@ -15,3 +15,25 @@ create index if not exists competition_tiebreaks_competition_idx
 
 grant select, insert, update, delete on public.competition_tiebreaks to authenticated;
 revoke all on public.competition_tiebreaks from anon;
+
+alter table public.competition_tiebreaks enable row level security;
+
+drop policy if exists competition_tiebreaks_organiser_all on public.competition_tiebreaks;
+create policy competition_tiebreaks_organiser_all
+on public.competition_tiebreaks
+for all
+to authenticated
+using (
+  exists (
+    select 1 from public.competitions c
+    where c.id = competition_id
+      and c.organiser_id = auth.uid()
+  )
+)
+with check (
+  exists (
+    select 1 from public.competitions c
+    where c.id = competition_id
+      and c.organiser_id = auth.uid()
+  )
+);
