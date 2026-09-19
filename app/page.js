@@ -70,7 +70,7 @@ function ReverseCrossoverPreview({players = [], groupCount = 2}) {
 }
 
 
-function rankGroupPlayers(groupMatches){
+function rankGroupPlayers(groupMatches,lagWinnerIds=[]){
   const standings={};
   for(const m of groupMatches){
     for(const id of [m.player1_id,m.player2_id]){
@@ -99,13 +99,15 @@ function rankGroupPlayers(groupMatches){
       standings[m.player2_id].against+=Number(m.score1||0);
     }
   }
-  return Object.values(standings).sort((a,b)=>
-    b.wins-a.wins ||
-    b.ballDiff-a.ballDiff ||
-    (b.for-b.against)-(a.for-a.against) ||
-    b.for-a.for ||
-    a.id.localeCompare(b.id)
-  );
+  return Object.values(standings).sort((a,b)=>{
+    const aLag=lagWinnerIds.includes(a.id), bLag=lagWinnerIds.includes(b.id);
+    return (aLag===bLag?0:aLag?-1:1) ||
+      b.wins-a.wins ||
+      b.ballDiff-a.ballDiff ||
+      (b.for-b.against)-(a.for-a.against) ||
+      b.for-a.for ||
+      a.id.localeCompare(b.id);
+  });
 }
 
 function qualificationPlan(groupCount, qualifiersPerGroup){
@@ -222,6 +224,8 @@ export default function Home() {
   const [players,setPlayers]=useState([]),[tables,setTables]=useState([]),[matches,setMatches]=useState([]);
   const [modal,setModal]=useState(null),[msg,setMsg]=useState('');
   const [wildcardLag,setWildcardLag]=useState(null);
+  const [roundRobinLag,setRoundRobinLag]=useState(null);
+  const [roundRobinTiebreaks,setRoundRobinTiebreaks]=useState([]);
   const [drawSettings,setDrawSettings]=useState({type:'Knockout',race_to:3,group_race_to:1,knockout_race_to:2,group_count:4,qualifiers_per_group:4,group_knockout_mode:'group_crossover'});
   const autoPopulateInFlight=useRef(false);
   const [qrData,setQrData]=useState(null);
@@ -265,7 +269,8 @@ export default function Home() {
     const [p,m,tDirect]=await Promise.all([
       supabase.from('competition_players').select('id,player_id,checked_in,players(id,first_name,last_name,display_name,phone,email,club_name,primary_club_id,requires_accessible_table)').eq('competition_id',c.id),
       supabase.from('competition_matches').select('*').eq('competition_id',c.id).order('match_number'),
-      supabase.from('tournament_tables').select('*').eq('competition_id',c.id).order('table_number')
+      supabase.from('tournament_tables').select('*').eq('competition_id',c.id).order('table_number'),
+      c.format==='Round Robin' ? supabase.from('competition_tiebreaks').select('*').eq('competition_id',c.id) : Promise.resolve({data:[],error:null})
     ]);
     let sessionTables=tDirect.data||[];
     if(c.recurring_template_id){
@@ -273,6 +278,7 @@ export default function Home() {
       if(!sharedError && (shared||[]).length>0) sessionTables=shared||[];
     }
     setPlayers(p.data||[]);setMatches(m.data||[]);setTables(sessionTables);
+    setRoundRobinTiebreaks(rrTb?.error ? [] : (rrTb?.data||[]));
     if(c.recurring_template_id && c.season_id){
       const {data:sc}=await supabase.from('competitions').select('*').eq('recurring_template_id',c.recurring_template_id).eq('season_id',c.season_id).order('season_week',{ascending:true});
       setSeasonCompetitions(sc||[]);
@@ -878,6 +884,36 @@ export default function Home() {
     setWildcardLag(null);
     await generateGroupKnockout(drawSettings,null,playerId);
   }
+
+  async function resolveRoundRobinLag(playerId){
+    if(!roundRobinLag || !selected)return;
+    const {error}=await supabase.from('competition_tiebreaks').upsert({
+      competition_id:selected.id,
+      tie_key:roundRobinLag.key,
+      player_ids:roundRobinLag.candidates.map(p=>p.id),
+      winner_id:playerId,
+      tie_type:'round_robin_lag'
+    },{onConflict:'competition_id,tie_key'});
+    if(error){setMsg('Could not save the Round Robin lag result: '+error.message);return;}
+    setRoundRobinTiebreaks(prev=>[...prev.filter(x=>x.tie_key!==roundRobinLag.key),{competition_id:selected.id,tie_key:roundRobinLag.key,player_ids:roundRobinLag.candidates.map(p=>p.id),winner_id:playerId}]);
+    setRoundRobinLag(null);
+    setMsg(playerName(playerId)+' won the physical lag and is ranked ahead of the tied player.');
+  }
+
+  useEffect(()=>{
+    if(!selected || selected.format!=='Round Robin' || !matches.length || roundRobinLag) return;
+    const completed=matches.filter(m=>m.status==='completed' && m.winner_id);
+    if(completed.length!==matches.length)return;
+    const ranked=rankGroupPlayers(matches);
+    for(const p of ranked){
+      const tied=ranked.filter(x=>x.wins===p.wins && x.ballDiff===p.ballDiff && (x.for-x.against)===(p.for-p.against) && x.for===p.for);
+      if(tied.length>1){
+        const key=tied.map(x=>x.id).sort().join(':');
+        if(!roundRobinTiebreaks.some(t=>t.tie_key===key)){ setRoundRobinLag({key,candidates:tied}); }
+        break;
+      }
+    }
+  },[selected,matches,roundRobinTiebreaks,roundRobinLag]);
 
   async function testCompleteRoundRobinWithTie(){
     if(!selected)return;
@@ -1571,7 +1607,7 @@ export default function Home() {
   </Panel>
 
   {matches.some(m=>m.group_name)&&<GroupStandingsPanel matches={matches} playerName={playerName} qualifiers={Math.max(1,Number(drawSettings.qualifiers_per_group||4))}/>}
-  {selected.format==='Round Robin'&&matches.length>0&&<RoundRobinStandingsPanel matches={matches} playerName={playerName}/>}
+  {selected.format==='Round Robin'&&matches.length>0&&<RoundRobinStandingsPanel matches={matches} playerName={playerName} lagWinnerIds={roundRobinTiebreaks.map(x=>x.winner_id)}/>
 
   <Panel title="Matches & Table Assignment">
     <div className="drawTools">
@@ -1602,6 +1638,14 @@ export default function Home() {
   </Panel>}
   </section>}</div>
   {qrData&&<QRModal data={qrData} close={()=>setQrData(null)}/>}
+  {roundRobinLag&&<Modal title="Round Robin tie — lag required" close={()=>setRoundRobinLag(null)}>
+    <div className="drawWarningNote"><strong>Final standings are tied.</strong><br/>These players have identical wins, ball differential, frame differential and frames for. Run a physical lag at the table, then record the winner here.</div>
+    <div className="lagCandidateList">{roundRobinLag.candidates.map(p=><div className="lagCandidate" key={p.id}>
+      <div><strong>{playerName(p.id)}</strong><small>{p.wins} wins · {p.ballDiff>=0?'+':''}{p.ballDiff} ball diff · {(p.for-p.against)>=0?'+':''}{p.for-p.against} frame diff</small></div>
+      <button className="primary" onClick={()=>resolveRoundRobinLag(p.id)}>Lag winner</button>
+    </div>)}</div>
+    <small className="muted">The lag is a tie-break only. It does not count as a tournament match or change player win/loss records.</small>
+  </Modal>}
   {wildcardLag&&<Modal title="Wildcard tie — lag required" close={()=>setWildcardLag(null)}>
     <div className="correctionAlert">
       <strong>Wildcard qualification is tied.</strong>
@@ -1635,26 +1679,20 @@ export default function Home() {
 }
 
 function Panel({title,add,addText,children}){return <div className="panel"><div className="ph"><h3>{title}</h3>{add&&<button className="primary" onClick={add}>{addText}</button>}</div>{children}</div>}
-function RoundRobinStandingsPanel({matches=[],playerName}){
+function RoundRobinStandingsPanel({matches=[],playerName,lagWinnerIds=[]}){
   const completed=(matches||[]).filter(m=>m.status==='completed' && m.winner_id);
-  const ranked=rankGroupPlayers(matches);
+  const ranked=rankGroupPlayers(matches,lagWinnerIds);
   const played={};
-  for(const m of completed){
-    for(const id of [m.player1_id,m.player2_id]) if(id) played[id]=(played[id]||0)+1;
-  }
+  for(const m of completed){ for(const id of [m.player1_id,m.player2_id]) if(id) played[id]=(played[id]||0)+1; }
   return <Panel title="Round Robin standings">
-    <div className="standingsTableWrap">
-      <table className="standingsTable">
-        <thead><tr><th>#</th><th>Player</th><th>Played</th><th>W</th><th>L</th><th>Ball diff.</th><th>Frame diff.</th></tr></thead>
-        <tbody>
-          {ranked.map((r,i)=><tr key={r.id}>
-            <td>{i+1}</td><td><strong>{playerName(r.id)}</strong></td><td>{played[r.id]||0}</td><td>{r.wins}</td><td>{r.losses}</td>
-            <td>{r.ballDiff>=0?'+':''}{r.ballDiff}</td><td>{r.for-r.against>=0?'+':''}{r.for-r.against}</td>
-          </tr>)}
-        </tbody>
-      </table>
-    </div>
-    <small className="muted">Ranking order: wins → cumulative signed ball differential → frame difference → frames for.</small>
+    <div className="standingsTableWrap"><table className="standingsTable">
+      <thead><tr><th>#</th><th>Player</th><th>Played</th><th>W</th><th>L</th><th>Ball diff.</th><th>Frame diff.</th></tr></thead>
+      <tbody>{ranked.map((r,i)=><tr key={r.id}>
+        <td>{i+1}</td><td><strong>{playerName(r.id)}</strong>{lagWinnerIds.includes(r.id)&&<small className="muted"> · Lag winner</small>}</td><td>{played[r.id]||0}</td><td>{r.wins}</td><td>{r.losses}</td>
+        <td>{r.ballDiff>=0?'+':''}{r.ballDiff}</td><td>{r.for-r.against>=0?'+':''}{r.for-r.against}</td>
+      </tr>)}</tbody>
+    </table></div>
+    <small className="muted">Ranking order: wins → cumulative signed ball differential → frame difference → frames for. An exact final tie is decided by a physical lag.</small>
   </Panel>
 }
 
