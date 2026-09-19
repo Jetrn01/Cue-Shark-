@@ -1557,7 +1557,6 @@ function DrawModal({selected,players,matches=[],settings,setSettings,close,gener
       </select></label>
       <label>Knockout draw<select disabled={drawLocked} value={settings.group_knockout_mode||'group_crossover'} onChange={e=>setSettings({...settings,group_knockout_mode:e.target.value})}>
         <option value="group_crossover">Group crossover — A1 vs B4, A2 vs B3</option>
-        <option value="five_group_reverse">Five-group reverse crossover — 5 groups / Top 3 / 1 wildcard</option>
         <option value="seeded">Seeded qualification order</option>
         <option value="random">Randomise qualifiers</option>
       </select></label>
