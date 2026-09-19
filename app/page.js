@@ -221,6 +221,7 @@ export default function Home() {
   const [templateTables,setTemplateTables]=useState([]);
   const [players,setPlayers]=useState([]),[tables,setTables]=useState([]),[matches,setMatches]=useState([]);
   const [modal,setModal]=useState(null),[msg,setMsg]=useState('');
+  const [wildcardLag,setWildcardLag]=useState(null);
   const [drawSettings,setDrawSettings]=useState({type:'Knockout',race_to:3,group_race_to:1,knockout_race_to:2,group_count:4,qualifiers_per_group:4,group_knockout_mode:'group_crossover'});
   const autoPopulateInFlight=useRef(false);
   const [qrData,setQrData]=useState(null);
@@ -873,7 +874,12 @@ export default function Home() {
     setMsg(`TEST COMPLETE: The ${remaining.length} remaining group results were simulated as confirmed by both players. Your existing completed result was preserved, and automatic knockout population was triggered.`);
   }
 
-  async function generateGroupKnockout(settings=drawSettings,sourceMatches=null){
+  async function resolveWildcardLag(playerId){
+    setWildcardLag(null);
+    await generateGroupKnockout(drawSettings,null,playerId);
+  }
+
+  async function generateGroupKnockout(settings=drawSettings,sourceMatches=null,wildcardWinnerId=null){
     const workingMatches=sourceMatches||matches;
     if(!selected)return;
     const groupMatches=workingMatches.filter(m=>m.group_name && Number(m.round_number)===1);
@@ -1020,8 +1026,29 @@ export default function Home() {
         ranked[g].slice(qualifiersPerGroup).forEach((p,pos)=>candidates.push({...p,group:g,position:qualifiersPerGroup+pos+1,qualificationType:'wildcard'}));
       });
       candidates.sort((a,b)=>b.wins-a.wins || b.ballDiff-a.ballDiff || (b.for-b.against)-(a.for-a.against) || b.for-a.for || a.id.localeCompare(b.id));
-      for(const candidate of candidates.slice(0,wildcardCount)){
-        if(!qualified.some(q=>q.id===candidate.id)) qualified.push(candidate);
+      if(wildcardCount===1){
+        const cutoff=candidates[0];
+        if(cutoff){
+          const sameScore=candidates.filter(c=>
+            c.wins===cutoff.wins &&
+            c.ballDiff===cutoff.ballDiff &&
+            (c.for-c.against)===(cutoff.for-cutoff.against) &&
+            c.for===cutoff.for
+          );
+          if(sameScore.length>1 && !wildcardWinnerId){
+            setWildcardLag({candidates:sameScore});
+            setMsg('Wildcard tie detected. Run a lag between the tied players, then record the winner.');
+            return;
+          }
+          const chosen=wildcardWinnerId
+            ? candidates.find(c=>c.id===wildcardWinnerId)
+            : cutoff;
+          if(chosen && !qualified.some(q=>q.id===chosen.id)) qualified.push(chosen);
+        }
+      } else {
+        for(const candidate of candidates.slice(0,wildcardCount)){
+          if(!qualified.some(q=>q.id===candidate.id)) qualified.push(candidate);
+        }
       }
       if(qualified.length<targetSize){setMsg(`There are not enough eligible non-qualifiers to fill the ${targetSize}-player knockout. Reduce the number of groups or qualifiers per group.`);return;}
     }
@@ -1523,7 +1550,23 @@ export default function Home() {
   </Panel>}
   </section>}</div>
   {qrData&&<QRModal data={qrData} close={()=>setQrData(null)}/>}
-  {modal?.type==='clubs'&&<ClubsModal clubs={clubs} close={()=>setModal(null)} save={saveClub}/>}
+  {wildcardLag&&<Modal title="Wildcard tie — lag required" close={()=>setWildcardLag(null)}>
+    <div className="correctionAlert">
+      <strong>Wildcard qualification is tied.</strong>
+      <span>The tied players have identical wins, ball differential, frame differential and frames for. Run a lag at the table, then record the winner here.</span>
+    </div>
+    <div className="lagCandidateList">
+      {wildcardLag.candidates.map(p=><div className="lagCandidate" key={p.id}>
+        <div>
+          <strong>{p.name||p.full_name||'Player'}</strong>
+          <small>{p.wins} wins · {p.ballDiff>=0?'+':''}{p.ballDiff} ball diff · {(p.for-p.against)>=0?'+':''}{p.for-p.against} frame diff</small>
+        </div>
+        <button className="primary" onClick={()=>resolveWildcardLag(p.id)}>Lag winner</button>
+      </div>)}
+    </div>
+    <small className="muted">Only the player who wins the physical lag should be selected. This lag is a qualification tie-break and does not count as a tournament match.</small>
+  </Modal>}
+  {modal?.type==='clubs'&&<ClubsModal clubs={clubs} close={()=>setModal(null)} save={saveClub}/>}}
   {modal?.type==='playerdb'&&<PlayerDatabaseModal players={playerDB} currentPlayers={players} close={()=>setModal(null)} add={addExistingPlayerToCompetition} edit={(p)=>setModal({type:'masterPlayer',p})} deletePlayer={deleteMasterPlayer} newPlayer={()=>setModal({type:'masterPlayer',p:null})} profile={openPlayerProfile}/>}
   {modal?.type==='playerProfile'&&<PlayerProfileModal data={profileData} close={()=>setModal(null)} playerName={playerName}/>}
   {modal?.type==='draw'&&<DrawModal selected={selected} players={players} matches={matches} settings={drawSettings} setSettings={setDrawSettings} close={()=>setModal(null)} generate={generateDraw} generateGroups={generateGroupsReverseCrossover}/>}
@@ -1869,6 +1912,11 @@ const css=`*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;ba
 .statusPill.available{background:#fff}.statusPill.occupied{background:#f5f5f5}.statusPill.unavailable{background:#eee}
 .waitingPanel,.resultsPanel{margin-top:20px;border-top:1px solid #edf0f4;padding-top:15px}.waitingList,.resultsList{border:1px solid #e3e7ee;border-radius:12px;overflow:hidden}.waitingItem,.resultItem{display:flex;justify-content:space-between;gap:12px;padding:11px 13px;border-top:1px solid #edf0f4;background:#fff}.waitingItem:first-child,.resultItem:first-child{border-top:0}.waitingItem span,.resultItem span{color:#667085;font-size:13px}.resultItem>div{display:flex;flex-direction:column;gap:3px}.resultScore{text-align:right}.resultScore span{font-size:12px}
 .templateIntro{background:#f7f8fb;border:1px solid #e3e7ee;border-radius:10px;padding:12px;margin-bottom:12px}.templateIntro strong,.templateIntro span{display:block}.templateIntro span{color:#667085;font-size:13px;margin-top:4px}.templateCard{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:13px 0;border-top:1px solid #edf0f4}.templateCard>div:first-child strong,.templateCard>div:first-child span,.templateCard>div:first-child small{display:block}.templateCard span,.templateCard small{color:#667085;margin-top:4px}.templateCard small{font-size:12px}.templateCard .actions{justify-content:flex-end}@media(max-width:700px){.templateCard{flex-direction:column;align-items:flex-start}.templateCard .actions{width:100%;justify-content:flex-start}}
+
+.lagCandidateList{display:grid;gap:8px;margin:12px 0}
+.lagCandidate{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:11px 12px;border:1px solid #e3e7ee;border-radius:10px;background:#fafbfc}
+.lagCandidate strong,.lagCandidate small{display:block}.lagCandidate small{color:#667085;font-size:12px;margin-top:3px}
+@media(max-width:600px){.lagCandidate{align-items:flex-start;flex-direction:column}.lagCandidate button{width:100%}}
 
 .reverseCrossoverPreview{margin:16px 0;border:1px solid #dfe4ec;border-radius:14px;padding:15px;background:#fafbfc}
 .previewHeader{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:11px}
